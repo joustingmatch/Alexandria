@@ -11558,6 +11558,7 @@ function Library:CreateWindow(WindowInfo)
     local ResizeButton
     local Tabs
     local TabsListLayout
+    local TabsPadding
     local Container
     local BackgroundImage
     local HasBackgroundImage = false
@@ -12146,7 +12147,7 @@ function Library:CreateWindow(WindowInfo)
             VerticalAlignment = Enum.VerticalAlignment.Center,
             Parent = Tabs,
         })
-        New("UIPadding", {
+        TabsPadding = New("UIPadding", {
             PaddingLeft = UDim.new(0, 1),
             PaddingRight = UDim.new(0, 1),
             Parent = Tabs,
@@ -12516,16 +12517,20 @@ function Library:CreateWindow(WindowInfo)
         Layout = if typeof(Layout) == "string" and string.lower(Layout) == "side" then "Side" else "Top"
         WindowInfo.TabLayout = Layout
 
-        local BodyHeight = HeaderHeight + FooterHeight
+        --// Side column starts a gap below the header so the first button's outline isn't clipped
+        local SideTop = HeaderHeight + 8
+        local BodyHeight = SideTop + FooterHeight
         if Layout == "Side" then
             local SideWidth = WindowInfo.SideTabsWidth
             Tabs.AutomaticCanvasSize = Enum.AutomaticSize.Y
             Tabs.ScrollingDirection = Enum.ScrollingDirection.Y
-            Tabs.Position = UDim2.fromOffset(WindowPadding, HeaderHeight)
+            Tabs.Position = UDim2.fromOffset(WindowPadding, SideTop)
             Tabs.Size = UDim2.new(0, SideWidth, 1, -BodyHeight)
             TabsListLayout.FillDirection = Enum.FillDirection.Vertical
             TabsListLayout.VerticalAlignment = Enum.VerticalAlignment.Top
-            Container.Position = UDim2.fromOffset(WindowPadding * 2 + SideWidth, HeaderHeight)
+            TabsPadding.PaddingTop = UDim.new(0, 1)
+            TabsPadding.PaddingBottom = UDim.new(0, 1)
+            Container.Position = UDim2.fromOffset(WindowPadding * 2 + SideWidth, SideTop)
             Container.Size = UDim2.new(1, -WindowPadding * 3 - SideWidth, 1, -BodyHeight)
         else
             Tabs.AutomaticCanvasSize = Enum.AutomaticSize.X
@@ -12534,6 +12539,8 @@ function Library:CreateWindow(WindowInfo)
             Tabs.Size = UDim2.new(1, -WindowPadding * 2, 0, TabBarHeight)
             TabsListLayout.FillDirection = Enum.FillDirection.Horizontal
             TabsListLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+            TabsPadding.PaddingTop = UDim.new(0, 0)
+            TabsPadding.PaddingBottom = UDim.new(0, 0)
             Container.Position = UDim2.fromOffset(WindowPadding, ContentTop)
             Container.Size = UDim2.new(1, -WindowPadding * 2, 1, -ContentTop - FooterHeight)
         end
