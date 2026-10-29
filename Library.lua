@@ -444,6 +444,8 @@ local Templates = {
         TabTransitionTime = 0.22,
         TabSwipeOffset = 26,
         TabSwipeFrom = "bottom",
+        TabLayout = "Top", --// "Top" strip under the header, or "Side" column left of the content
+        SideTabsWidth = 150,
         TabButtonsStyle = {
             Gap = 0,
             Padding = 0,
@@ -11555,6 +11557,7 @@ function Library:CreateWindow(WindowInfo)
     local CurrentTabDescription
     local ResizeButton
     local Tabs
+    local TabsListLayout
     local Container
     local BackgroundImage
     local HasBackgroundImage = false
@@ -12137,7 +12140,7 @@ function Library:CreateWindow(WindowInfo)
             Size = UDim2.new(1, -WindowPadding * 2, 0, TabBarHeight),
             Parent = MainFrame,
         })
-        New("UIListLayout", {
+        TabsListLayout = New("UIListLayout", {
             FillDirection = Enum.FillDirection.Horizontal,
             Padding = UDim.new(0, math.max(TabButtonsStyle.Gap, 4)),
             VerticalAlignment = Enum.VerticalAlignment.Center,
@@ -12502,6 +12505,55 @@ function Library:CreateWindow(WindowInfo)
 
     function Window:SetSidebarWidth(_Width) end
 
+    local function ApplyTabButtonLayout(Entry)
+        local Side = WindowInfo.TabLayout == "Side"
+        Entry.Button.AutomaticSize = if Side then Enum.AutomaticSize.None else Enum.AutomaticSize.X
+        Entry.Button.Size = if Side then UDim2.new(1, 0, 0, TabBarHeight) else UDim2.fromOffset(0, TabBarHeight - 4)
+    end
+
+    --// Swaps the tab buttons between the top strip and a column left of the content
+    function Window:SetTabLayout(Layout: string)
+        Layout = if typeof(Layout) == "string" and string.lower(Layout) == "side" then "Side" else "Top"
+        WindowInfo.TabLayout = Layout
+
+        local BodyHeight = HeaderHeight + FooterHeight
+        if Layout == "Side" then
+            local SideWidth = WindowInfo.SideTabsWidth
+            Tabs.AutomaticCanvasSize = Enum.AutomaticSize.Y
+            Tabs.ScrollingDirection = Enum.ScrollingDirection.Y
+            Tabs.Position = UDim2.fromOffset(WindowPadding, HeaderHeight)
+            Tabs.Size = UDim2.new(0, SideWidth, 1, -BodyHeight)
+            TabsListLayout.FillDirection = Enum.FillDirection.Vertical
+            TabsListLayout.VerticalAlignment = Enum.VerticalAlignment.Top
+            Container.Position = UDim2.fromOffset(WindowPadding * 2 + SideWidth, HeaderHeight)
+            Container.Size = UDim2.new(1, -WindowPadding * 3 - SideWidth, 1, -BodyHeight)
+        else
+            Tabs.AutomaticCanvasSize = Enum.AutomaticSize.X
+            Tabs.ScrollingDirection = Enum.ScrollingDirection.X
+            Tabs.Position = UDim2.fromOffset(WindowPadding, HeaderHeight)
+            Tabs.Size = UDim2.new(1, -WindowPadding * 2, 0, TabBarHeight)
+            TabsListLayout.FillDirection = Enum.FillDirection.Horizontal
+            TabsListLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+            Container.Position = UDim2.fromOffset(WindowPadding, ContentTop)
+            Container.Size = UDim2.new(1, -WindowPadding * 2, 1, -ContentTop - FooterHeight)
+        end
+        Tabs.CanvasPosition = Vector2.zero
+
+        for _, Entry in Library.TabButtons do
+            if typeof(Entry) == "table" and Entry.Button then
+                ApplyTabButtonLayout(Entry)
+            end
+        end
+
+        for _, Tab in Library.Tabs do
+            Tab:Resize(true)
+        end
+    end
+
+    function Window:GetTabLayout(): string
+        return WindowInfo.TabLayout
+    end
+
     function Window:ShowTabInfo(Name, Description)
         CurrentTabLabel.Text = Name
         CurrentTabDescription.Text = Description or ""
@@ -12570,12 +12622,14 @@ function Library:CreateWindow(WindowInfo)
             Parent = TabButton,
         })
 
-        table.insert(Library.TabButtons, {
+        local Entry = {
             Button = TabButton,
             Label = TabLabel,
             Padding = ButtonPadding,
             Icon = TabIcon,
-        })
+        }
+        table.insert(Library.TabButtons, Entry)
+        ApplyTabButtonLayout(Entry)
 
         return TabButton, TabLabel, TabIcon, TabStroke
     end
@@ -15204,6 +15258,7 @@ function Library:CreateWindow(WindowInfo)
     --// Username = true shows the local player's name
     Window:SetUsername(if WindowInfo.Username == true then LocalPlayer.Name else WindowInfo.Username)
     Window:SetBadge(WindowInfo.Badge)
+    Window:SetTabLayout(WindowInfo.TabLayout)
     if WindowInfo.EnableCompacting and WindowInfo.SidebarCompacted then
         Window:SetSidebarWidth(WindowInfo.SidebarCompactWidth)
     end

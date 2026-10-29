@@ -456,6 +456,14 @@ MenuGroup:AddCheckbox("ShowToggleButton", {
 		Library:SetToggleButtonVisible(Value)
 	end,
 })
+MenuGroup:AddDropdown("TabLayout", {
+	Text = "Tab Layout",
+	Values = { "Top", "Side" },
+	Default = Window:GetTabLayout(),
+	Callback = function(Value)
+		Window:SetTabLayout(Value)
+	end,
+})
 MenuGroup:AddCheckbox("AlwaysOnTop", {
 	Text = "Always On Top",
 	Default = false,

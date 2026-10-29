@@ -980,6 +980,8 @@ export type Window = {
     SetCompact: (self: Window, State: boolean) -> (),
     ShowTabInfo: (self: Window, Name: string, Description: string) -> (),
     HideTabInfo: (self: Window) -> (),
+    SetTabLayout: (self: Window, Layout: "Top" | "Side" | string) -> (),
+    GetTabLayout: (self: Window) -> "Top" | "Side",
     AddTab: (
         self: Window,
         Info: { Name: string, Icon: string?, Description: string?, Tooltip: string?, Order: number? } | string,
@@ -1276,6 +1278,8 @@ export type Library = {
             TabTransitionTime: number?,
             TabSwipeOffset: number?,
             TabSwipeFrom: ("left" | "right" | "top" | "bottom" | "auto" | string)?,
+            TabLayout: ("Top" | "Side" | string)?,
+            SideTabsWidth: number?,
             TabButtonsStyle: {
                 Gap: number?,
                 Padding: number?,
