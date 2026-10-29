@@ -846,6 +846,17 @@ export type Tab = {
     SetVisible: (self: Tab, Visible: boolean) -> (),
     SetOrder: (self: Tab, Order: number) -> (),
     SetTooltip: (self: Tab, Text: string?) -> (),
+    SetSelected: (self: Tab, Selected: boolean) -> (),
+    AddSubTab: (
+        self: Tab,
+        Info: { Name: string, Icon: string?, Description: string?, Tooltip: string?, Order: number? } | string,
+        Icon: string?,
+        Description: string?,
+        Order: number?
+    ) -> Tab,
+    ParentTab: Tab?,
+    SubTabs: { Tab },
+    ActiveSubTab: Tab?,
 }
 
 export type KeyBoxInfo = {

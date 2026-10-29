@@ -12507,6 +12507,10 @@ function Library:CreateWindow(WindowInfo)
     function Window:SetSidebarWidth(_Width) end
 
     local function ApplyTabButtonLayout(Entry)
+        if Entry.Sub then
+            return
+        end
+
         local Side = WindowInfo.TabLayout == "Side"
         Entry.Button.AutomaticSize = if Side then Enum.AutomaticSize.None else Enum.AutomaticSize.X
         Entry.Button.Size = if Side then UDim2.new(1, 0, 0, TabBarHeight) else UDim2.fromOffset(0, TabBarHeight - 4)
@@ -12570,7 +12574,7 @@ function Library:CreateWindow(WindowInfo)
     function Window:HideTabInfo() end
 
     --// Tab strip pill: icon + label, filled and outlined while active
-    local function CreateTabButton(Name, Icon, Order)
+    local function CreateTabButton(Name, Icon, Order, Parent)
         local TabButton = New("TextButton", {
             AutomaticSize = Enum.AutomaticSize.X,
             BackgroundColor3 = "MainColor",
@@ -12578,7 +12582,7 @@ function Library:CreateWindow(WindowInfo)
             Size = UDim2.fromOffset(0, TabBarHeight - 4),
             Text = "",
             LayoutOrder = Order,
-            Parent = Tabs,
+            Parent = Parent or Tabs,
         })
         table.insert(
             Library.Corners,
@@ -12634,6 +12638,7 @@ function Library:CreateWindow(WindowInfo)
             Label = TabLabel,
             Padding = ButtonPadding,
             Icon = TabIcon,
+            Sub = Parent ~= nil,
         }
         table.insert(Library.TabButtons, Entry)
         ApplyTabButtonLayout(Entry)
@@ -12641,8 +12646,22 @@ function Library:CreateWindow(WindowInfo)
         return TabButton, TabLabel, TabIcon, TabStroke
     end
 
+    --// Parents with sub-tabs show their strip and stay lit while one of their sub-tabs is active
+    local function SyncSubTabStrips()
+        local Active = Library.ActiveTab
+        for _, Tab in Library.Tabs do
+            if Tab.SubTabStrip then
+                local Open = Active ~= nil and Active.ParentTab == Tab
+                Tab.SubTabStrip.Visible = Open
+                Tab.SubHolder.Visible = Open
+                Tab:SetSelected(Open)
+            end
+        end
+    end
+
     function Window:AddTab(...)
         local Name = nil
+        local ParentTab = nil
         local Icon = nil
         local Description = nil
         local Tooltip = nil
@@ -12655,6 +12674,7 @@ function Library:CreateWindow(WindowInfo)
             Description = Info.Description
             Tooltip = Info.Tooltip
             Order = Info.Order
+            ParentTab = Info.ParentTab
         else
             Name = select(1, ...)
             Icon = select(2, ...)
@@ -12663,8 +12683,11 @@ function Library:CreateWindow(WindowInfo)
         end
 
         if not tonumber(Order) then
-            Order = #Tabs:GetChildren()
+            Order = #(if ParentTab then ParentTab.SubTabStrip else Tabs):GetChildren()
         end
+
+        --// Sub-tabs are keyed under their parent so names can repeat across parents
+        local TabKey = if ParentTab then ParentTab.Name .. "/" .. Name else Name
 
         local TabButton: TextButton
         local TabLabel
@@ -12677,7 +12700,7 @@ function Library:CreateWindow(WindowInfo)
 
         Icon = Library:GetCustomIcon(Icon)
         do
-            TabButton, TabLabel, TabIcon, TabStroke = CreateTabButton(Name, Icon, Order)
+            TabButton, TabLabel, TabIcon, TabStroke = CreateTabButton(Name, Icon, Order, ParentTab and ParentTab.SubTabStrip)
 
             --// Tab Container \\--
             TabContainer = New("Frame", {
@@ -12685,7 +12708,7 @@ function Library:CreateWindow(WindowInfo)
                 Position = UDim2.fromScale(0, 0),
                 Size = UDim2.fromScale(1, 1),
                 Visible = false,
-                Parent = Container,
+                Parent = if ParentTab then ParentTab.SubHolder else Container,
             })
 
             TabLeft = New("ScrollingFrame", {
@@ -12786,6 +12809,12 @@ function Library:CreateWindow(WindowInfo)
             Groupboxes = {},
             Tabboxes = {},
             DependencyGroupboxes = {},
+
+            ParentTab = ParentTab,
+            SubTabs = {},
+            ActiveSubTab = nil,
+            SubTabStrip = nil :: ScrollingFrame?,
+            SubHolder = nil :: Frame?,
         }
 
         --// Warning Box \\--
@@ -13792,7 +13821,7 @@ function Library:CreateWindow(WindowInfo)
         end
 
         function Tab:Hover(Hovering)
-            if Library.ActiveTab == Tab then
+            if Library.ActiveTab == Tab or (Library.ActiveTab and Library.ActiveTab.ParentTab == Tab) then
                 return
             end
 
@@ -13806,7 +13835,40 @@ function Library:CreateWindow(WindowInfo)
             end
         end
 
+        function Tab:SetSelected(Selected: boolean)
+            TweenService:Create(TabButton, Library.TweenInfo, {
+                BackgroundTransparency = Selected and 0 or 1,
+            }):Play()
+            TweenService:Create(TabStroke, Library.TweenInfo, {
+                Transparency = Selected and 0 or 1,
+            }):Play()
+            TweenService:Create(TabLabel, Library.TweenInfo, {
+                TextTransparency = Selected and 0 or 0.5,
+            }):Play()
+            if TabIcon then
+                TweenService:Create(TabIcon, Library.TweenInfo, {
+                    ImageTransparency = Selected and 0 or 0.5,
+                }):Play()
+            end
+        end
+
         function Tab:Show()
+            --// A parent opens its last used (or first visible) sub-tab instead of its own page
+            if #Tab.SubTabs > 0 then
+                local SubTab = Tab.ActiveSubTab
+                if not (SubTab and SubTab.Button.Visible) then
+                    SubTab = Tab.SubTabs[1]
+                    for _, Candidate in Tab.SubTabs do
+                        if Candidate.Button.Visible then
+                            SubTab = Candidate
+                            break
+                        end
+                    end
+                end
+                SubTab:Show()
+                return
+            end
+
             if Library.ActiveTab == Tab then
                 return
             end
@@ -13815,20 +13877,7 @@ function Library:CreateWindow(WindowInfo)
                 Library.ActiveTab:Hide()
             end
 
-            TweenService:Create(TabButton, Library.TweenInfo, {
-                BackgroundTransparency = 0,
-            }):Play()
-            TweenService:Create(TabStroke, Library.TweenInfo, {
-                Transparency = 0,
-            }):Play()
-            TweenService:Create(TabLabel, Library.TweenInfo, {
-                TextTransparency = 0,
-            }):Play()
-            if TabIcon then
-                TweenService:Create(TabIcon, Library.TweenInfo, {
-                    ImageTransparency = 0,
-                }):Play()
-            end
+            Tab:SetSelected(true)
 
             Window:ShowTabInfo(Name, Description)
 
@@ -13836,6 +13885,10 @@ function Library:CreateWindow(WindowInfo)
             Tab:RefreshSides()
 
             Library.ActiveTab = Tab
+            if ParentTab then
+                ParentTab.ActiveSubTab = Tab
+            end
+            SyncSubTabStrips()
 
             if Library.Searching then
                 Library:UpdateSearch(Library.SearchText)
@@ -13843,29 +13896,74 @@ function Library:CreateWindow(WindowInfo)
         end
 
         function Tab:Hide()
-            TweenService:Create(TabButton, Library.TweenInfo, {
-                BackgroundTransparency = 1,
-            }):Play()
-            TweenService:Create(TabStroke, Library.TweenInfo, {
-                Transparency = 1,
-            }):Play()
-
-
-            TweenService:Create(TabLabel, Library.TweenInfo, {
-                TextTransparency = 0.5,
-            }):Play()
-
-            if TabIcon then
-                TweenService:Create(TabIcon, Library.TweenInfo, {
-                    ImageTransparency = 0.5,
-                }):Play()
-            end
+            Tab:SetSelected(false)
 
             Library:PlayTabAnimation(Tab, false)
             Window:HideTabInfo()
 
             Library.PreviousTab = Tab
             Library.ActiveTab = nil
+        end
+
+        --// Adds a tab inside this one; its button sits in a strip above the content while this tab is open
+        function Tab:AddSubTab(...)
+            if not Tab.SubTabStrip then
+                Tab.SubTabStrip = New("ScrollingFrame", {
+                    AutomaticCanvasSize = Enum.AutomaticSize.X,
+                    BackgroundTransparency = 1,
+                    CanvasSize = UDim2.fromScale(0, 0),
+                    ScrollBarImageTransparency = 1,
+                    ScrollBarThickness = 0,
+                    ScrollingDirection = Enum.ScrollingDirection.X,
+                    Size = UDim2.new(1, 0, 0, TabBarHeight),
+                    Visible = false,
+                    Parent = Container,
+                })
+                New("UIListLayout", {
+                    FillDirection = Enum.FillDirection.Horizontal,
+                    Padding = UDim.new(0, math.max(TabButtonsStyle.Gap, 4)),
+                    SortOrder = Enum.SortOrder.LayoutOrder,
+                    VerticalAlignment = Enum.VerticalAlignment.Center,
+                    Parent = Tab.SubTabStrip,
+                })
+                New("UIPadding", {
+                    PaddingLeft = UDim.new(0, 2),
+                    PaddingRight = UDim.new(0, 2),
+                    Parent = Tab.SubTabStrip,
+                })
+
+                Tab.SubHolder = New("Frame", {
+                    BackgroundTransparency = 1,
+                    ClipsDescendants = true,
+                    Position = UDim2.fromOffset(0, TabBarHeight + 6),
+                    Size = UDim2.new(1, 0, 1, -TabBarHeight - 6),
+                    Visible = false,
+                    Parent = Container,
+                })
+            end
+
+            local Info
+            if select("#", ...) == 1 and typeof(...) == "table" then
+                Info = table.clone((...))
+            else
+                Info = {
+                    Name = select(1, ...),
+                    Icon = select(2, ...),
+                    Description = select(3, ...),
+                    Order = select(4, ...),
+                }
+            end
+            Info.ParentTab = Tab
+
+            local SubTab = Window:AddTab(Info)
+            table.insert(Tab.SubTabs, SubTab)
+
+            --// The parent was showing its own (empty) page; move onto the new sub-tab
+            if Library.ActiveTab == Tab then
+                SubTab:Show()
+            end
+
+            return SubTab
         end
 
         function Tab:SetVisible(Visible: boolean)
@@ -13896,6 +13994,23 @@ function Library:CreateWindow(WindowInfo)
 
         function Tab:Destroy()
             Tab.Destroyed = true
+
+            for _, SubTab in table.clone(Tab.SubTabs) do
+                SubTab:Destroy()
+            end
+            if Tab.SubTabStrip then
+                Tab.SubTabStrip:Destroy()
+                Tab.SubHolder:Destroy()
+            end
+            if ParentTab then
+                local Index = table.find(ParentTab.SubTabs, Tab)
+                if Index then
+                    table.remove(ParentTab.SubTabs, Index)
+                end
+                if ParentTab.ActiveSubTab == Tab then
+                    ParentTab.ActiveSubTab = nil
+                end
+            end
 
             if Tab.Connections then
                 for _, Connection in Tab.Connections do
@@ -13943,7 +14058,7 @@ function Library:CreateWindow(WindowInfo)
                 TabButton:Destroy()
             end
 
-            Library.Tabs[Name] = nil
+            Library.Tabs[TabKey] = nil
         end
 
         --// Execution \\--
@@ -13963,7 +14078,7 @@ function Library:CreateWindow(WindowInfo)
         end)
         TabButton.MouseButton1Click:Connect(Tab.Show)
 
-        Library.Tabs[Name] = Tab
+        Library.Tabs[TabKey] = Tab
 
         return Tab
     end
@@ -14481,6 +14596,7 @@ function Library:CreateWindow(WindowInfo)
             Tab:RefreshSides()
 
             Library.ActiveTab = Tab
+            SyncSubTabStrips()
 
             if Library.Searching then
                 Library:UpdateSearch(Library.SearchText)

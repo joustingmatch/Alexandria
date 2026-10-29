@@ -44,6 +44,14 @@ local Tabs = {
 	Settings = Window:AddTab("Settings", "settings"),
 }
 
+-- Sub-tabs sit in a strip above the content while their parent is open
+local Extras = Window:AddTab("Extras", "layers")
+local ExtrasGeneral = Extras:AddSubTab("General", "sliders-horizontal")
+local ExtrasMisc = Extras:AddSubTab("Misc", "shapes")
+
+ExtrasGeneral:AddGroupbox({ Side = "Left", Name = "General" }):AddLabel("A page inside the Extras tab")
+ExtrasMisc:AddGroupbox({ Side = "Left", Name = "Misc" }):AddLabel("Another page inside Extras")
+
 --============================================================================--
 --// Home: checkboxes, buttons, sliders, inputs, labels
 --============================================================================--
