@@ -8793,15 +8793,17 @@ do
         Dropdown.Menu = MenuTable
 
         local ItemHeight = 22
+        --// Multi dropdowns reserve the top row of the list for Select All / Deselect
+        local HeaderHeight = Info.Multi and ItemHeight or 0
         local PoolSize = math.max(1, Info.MaxVisibleDropdownItems + 2)
         local Pool = {}
         local FilteredEntries = {}
 
         function Dropdown:RecalculateListSize(Count)
             local ItemCount = Count or #FilteredEntries
-            local Y = math.clamp(ItemCount * ItemHeight, 0, Info.MaxVisibleDropdownItems * ItemHeight)
+            local Y = math.clamp(ItemCount * ItemHeight, 0, Info.MaxVisibleDropdownItems * ItemHeight) + HeaderHeight
 
-            MenuTable.Menu.CanvasSize = UDim2.fromOffset(0, ItemCount * ItemHeight)
+            MenuTable.Menu.CanvasSize = UDim2.fromOffset(0, ItemCount * ItemHeight + HeaderHeight)
 
             MenuTable:SetSize(function()
                 return UDim2.fromOffset((DisplayContainer.AbsoluteSize.X / Library.DPIScale), Y)
@@ -8996,7 +8998,7 @@ do
             end
 
             local MaxFirst = Total - PoolSize + 1
-            local ScrollY = MenuTable.Menu.CanvasPosition.Y / Library.DPIScale
+            local ScrollY = math.max(0, MenuTable.Menu.CanvasPosition.Y / Library.DPIScale - HeaderHeight)
             local Index = math.floor(ScrollY / ItemHeight) + 1
             return math.clamp(Index, 1, MaxFirst)
         end
@@ -9018,7 +9020,7 @@ do
                 end
 
                 Row.Container.Visible = true
-                Row.Container.Position = UDim2.fromOffset(0, (DataIndex - 1) * ItemHeight)
+                Row.Container.Position = UDim2.fromOffset(0, (DataIndex - 1) * ItemHeight + HeaderHeight)
 
                 local IsLast = DataIndex == Total
                 Row.Corner.BottomRightRadius = IsLast and UDim.new(0, Library.CornerRadius / 2) or UDim.new(0, 0)
@@ -9369,6 +9371,79 @@ do
 
         for _ = 1, PoolSize do
             table.insert(Pool, CreatePoolRow())
+        end
+
+        if Info.Multi then
+            local function SetAllFiltered(Active)
+                StopDragSelect()
+
+                local Changed = false
+                for _, Entry in FilteredEntries do
+                    if not Entry.IsDisabled and (Dropdown.Value[Entry.Value] and true or false) ~= Active then
+                        Dropdown.Value[Entry.Value] = Active or nil
+                        Changed = true
+                    end
+                end
+
+                --// Without AllowNull keep one value selected, mirroring the click guard
+                if not Active and not Info.AllowNull and Dropdown:GetActiveValues(true) == 0 then
+                    for _, Entry in FilteredEntries do
+                        if not Entry.IsDisabled then
+                            Dropdown.Value[Entry.Value] = true
+                            break
+                        end
+                    end
+                end
+
+                if not Changed then
+                    return
+                end
+
+                for _, Row in Pool do
+                    Row:UpdateButton()
+                end
+                Dropdown:Display()
+
+                Library:UpdateDependencyBoxes()
+                Dropdown:RunChanged()
+            end
+
+            local Header = New("Frame", {
+                BackgroundTransparency = 1,
+                Size = UDim2.new(1, 0, 0, HeaderHeight),
+                Parent = MenuTable.Menu,
+            })
+            New("UIListLayout", {
+                FillDirection = Enum.FillDirection.Horizontal,
+                SortOrder = Enum.SortOrder.LayoutOrder,
+                Parent = Header,
+            })
+
+            for Order, Action in { { "Select All", true }, { "Deselect", false } } do
+                local HeaderButton = New("TextButton", {
+                    BackgroundTransparency = 1,
+                    LayoutOrder = Order,
+                    Size = UDim2.new(0.5, 0, 1, 0),
+                    Text = Action[1],
+                    TextSize = 12,
+                    TextTransparency = 0.5,
+                    Parent = Header,
+                })
+
+                table.insert(Dropdown.Connections, HeaderButton.MouseEnter:Connect(function()
+                    TweenService:Create(HeaderButton, Library.HoverTweenInfo, {
+                        TextTransparency = 0,
+                    }):Play()
+                end))
+                table.insert(Dropdown.Connections, HeaderButton.MouseLeave:Connect(function()
+                    TweenService:Create(HeaderButton, Library.TweenInfo, {
+                        TextTransparency = 0.5,
+                    }):Play()
+                end))
+                table.insert(Dropdown.Connections, HeaderButton.MouseButton1Click:Connect(function()
+                    SetAllFiltered(Action[2])
+                end))
+            end
         end
 
         table.insert(Dropdown.Connections, MenuTable.Menu:GetPropertyChangedSignal("CanvasPosition"):Connect(function()

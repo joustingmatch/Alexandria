@@ -329,9 +329,23 @@ local function DoesConfigExist(ConfigName: string): boolean
     return if ConfigPath == false then false else isfile(ConfigPath)
 end
 
-local function GetAutoloadPath(): false | string
+--// "Account" autoloads are keyed by UserId and take priority over the shared "All" autoload
+local function GetAutoloadPath(Scope: string?): false | string
     local CurrentSettingsPath = GetCurrentSettingsPath()
-    return if CurrentSettingsPath == false then false else string.format("%s/autoload.txt", CurrentSettingsPath)
+    if CurrentSettingsPath == false then
+        return false
+    end
+
+    if Scope == "Account" then
+        local LocalPlayer = game:GetService("Players").LocalPlayer
+        if not LocalPlayer then
+            return false
+        end
+
+        return string.format("%s/autoload_%d.txt", CurrentSettingsPath, LocalPlayer.UserId)
+    end
+
+    return string.format("%s/autoload.txt", CurrentSettingsPath)
 end
 
 --// Indexes \\--
@@ -443,7 +457,7 @@ function SaveManager:RefreshConfigList()
 
         local Position = RawFileName:gsub("\\", "/"):find("/[^/]*$")
         local FileName = Position and RawFileName:sub(Position + 1) or RawFileName
-        if not FileName or FileName == "autoload" then continue end
+        if not FileName or FileName == "autoload" or FileName:match("^autoload_%d+$") then continue end
 
         table.insert(FileNames, FileName)
     end
@@ -677,18 +691,36 @@ function SaveManager:Delete(ConfigName: string): (boolean | string?)
         return false, "Failed to delete config file: " .. tostring(ErrorMessage)
     end
 
-    if ConfigName == SaveManager.AutoloadConfig then
-        SaveManager:DeleteAutoLoadConfig()
+    for _, Scope in { "Account", "All" } do
+        if SaveManager:GetAutoloadConfig(Scope) == ConfigName then
+            SaveManager:DeleteAutoLoadConfig(Scope)
+        end
     end
+    SaveManager:GetAutoloadConfig()
 
     return true
 end
 
 --// Auto Load Config \\--
-function SaveManager:GetAutoloadConfig(): (string, boolean, string?)
+--// Scope: "Account" (this UserId only), "All" (every account) or nil (the one that applies: Account, then All)
+function SaveManager:GetAutoloadConfig(Scope: string?): (string, boolean, string?)
+    if Scope == nil then
+        local ConfigName, Success, ErrorMessage = SaveManager:GetAutoloadConfig("Account")
+        if Success then
+            SaveManager.AutoloadConfig = ConfigName
+            SaveManager.AutoloadScope = "Account"
+            return ConfigName, true
+        end
+
+        ConfigName, Success, ErrorMessage = SaveManager:GetAutoloadConfig("All")
+        SaveManager.AutoloadConfig = if Success then ConfigName else nil
+        SaveManager.AutoloadScope = if Success then "All" else nil
+        return ConfigName, Success, ErrorMessage
+    end
+
     SaveManager:CheckFolderTree()
 
-    local AutoloadPath = GetAutoloadPath()
+    local AutoloadPath = GetAutoloadPath(Scope)
     if AutoloadPath == false then
         return "none", false, "Invalid path provided"
     end
@@ -707,18 +739,17 @@ function SaveManager:GetAutoloadConfig(): (string, boolean, string?)
         return "none", false, "Config file not found"
     end
 
-    SaveManager.AutoloadConfig = AutoloadConfigName
     return AutoloadConfigName, true
 end
 
-function SaveManager:SaveAutoloadConfig(ConfigName: string): (boolean, string?)
+function SaveManager:SaveAutoloadConfig(ConfigName: string, Scope: string?): (boolean, string?)
     if IsStringEmpty(ConfigName) then
         return false, "No config is selected"
     end
 
     SaveManager:CheckFolderTree()
 
-    local AutoloadPath = GetAutoloadPath()
+    local AutoloadPath = GetAutoloadPath(Scope)
     if AutoloadPath == false then
         return false, "Invalid path provided"
     end
@@ -732,7 +763,7 @@ function SaveManager:SaveAutoloadConfig(ConfigName: string): (boolean, string?)
         return false, ErrorMessage
     end
 
-    SaveManager.AutoloadConfig = ConfigName
+    SaveManager:GetAutoloadConfig()
     return true
 end
 
@@ -755,10 +786,10 @@ function SaveManager:LoadAutoloadConfig()
     SaveManager.Library:Notify(string.format("Successfully loaded autoload config %q", ConfigName))
 end
 
-function SaveManager:DeleteAutoLoadConfig(): (boolean, string?)
+function SaveManager:DeleteAutoLoadConfig(Scope: string?): (boolean, string?)
     SaveManager:CheckFolderTree()
 
-    local AutoloadPath = GetAutoloadPath()
+    local AutoloadPath = GetAutoloadPath(Scope)
     if AutoloadPath == false then
         return false, "Invalid path provided"
     end
@@ -772,7 +803,7 @@ function SaveManager:DeleteAutoLoadConfig(): (boolean, string?)
         return false, ErrorMessage
     end
 
-    SaveManager.AutoloadConfig = nil
+    SaveManager:GetAutoloadConfig()
     return true
 end
 
@@ -845,9 +876,15 @@ function SaveManager:BuildConfigSection(Tab: any, IconName: string)
     end
 
     local function RefreshAutoloadConfigLabel()
-        local AutoloadConfigName, _Success, _ErrorMessage = SaveManager:GetAutoloadConfig()
+        local AccountConfig = SaveManager:GetAutoloadConfig("Account")
+        local AllConfig = SaveManager:GetAutoloadConfig("All")
+        SaveManager:GetAutoloadConfig()
 
-        AutoloadConfigLabel:SetText(string.format("Autoload: %s", if AutoloadConfigName == "none" then "None" else AutoloadConfigName))
+        local function Format(Name: string): string
+            return if Name == "none" then "None" else Name
+        end
+
+        AutoloadConfigLabel:SetText(string.format("Autoload (This Account): %s\nAutoload (All Accounts): %s", Format(AccountConfig), Format(AllConfig)))
         if ConfigList then RefreshList() end
     end
 
@@ -982,22 +1019,31 @@ function SaveManager:BuildConfigSection(Tab: any, IconName: string)
     --// Autoload
     AutoloadConfigLabel = ConfigurationBox:AddLabel("Autoload: ...", true)
 
-    ConfigurationBox:AddButton("Set Autoload", function()
+    local function SetAutoload(Scope: string, ScopeText: string)
         local ConfigName = GetTargetConfig()
         if not ConfigName then
             Library:Notify("Please select a config first.")
             return
         end
 
-        local Success, ErrorMessage = SaveManager:SaveAutoloadConfig(ConfigName)
+        local Success, ErrorMessage = SaveManager:SaveAutoloadConfig(ConfigName, Scope)
         if not Success then
             Library:Notify(string.format("Failed to set autoload config %q: %s", ConfigName, ErrorMessage))
             return
         end
 
-        Library:Notify(string.format("Autoload set to %q", ConfigName))
+        Library:Notify(string.format("Autoload for %s set to %q", ScopeText, ConfigName))
         RefreshAutoloadConfigLabel()
-    end):AddButton("Clear Autoload", function()
+    end
+
+    ConfigurationBox:AddButton("Autoload for This Account", function()
+        SetAutoload("Account", "this account")
+    end)
+    ConfigurationBox:AddButton("Autoload for All Accounts", function()
+        SetAutoload("All", "all accounts")
+    end)
+
+    ConfigurationBox:AddButton("Clear Autoload", function()
         ShowDialog(
             function(): boolean
                 return true --// Always show
@@ -1005,12 +1051,13 @@ function SaveManager:BuildConfigSection(Tab: any, IconName: string)
 
             "SaveManager_ResetAutoload",
             "Clear autoload config",
-            "Are you sure you want to clear the autoload config? No config will be loaded automatically on next launch.",
+            "Are you sure you want to clear the autoload configs for this account and all accounts? No config will be loaded automatically on next launch.",
 
             "Clear",
             function()
-                local Success, ErrorMessage = SaveManager:DeleteAutoLoadConfig()
-                if not Success then
+                local ClearedAccount = SaveManager:DeleteAutoLoadConfig("Account")
+                local ClearedAll, ErrorMessage = SaveManager:DeleteAutoLoadConfig("All")
+                if not (ClearedAccount or ClearedAll) then
                     Library:Notify(string.format("Failed to clear autoload config: %s", ErrorMessage))
                     return
                 end
