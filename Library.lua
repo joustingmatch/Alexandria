@@ -12118,30 +12118,51 @@ function Library:CreateWindow(WindowInfo)
             Parent = BadgeLabel,
         })
 
-        --// Minimize button: hides the UI, same as the toggle keybind
-        local MinimizeButton = New("ImageButton", {
+        --// Minimize button: a badge-height square that fills on hover, hides the UI like the toggle keybind
+        local MinimizeButton = New("TextButton", {
             AutoButtonColor = false,
+            BackgroundColor3 = "MainColor",
             BackgroundTransparency = 1,
-            ImageColor3 = "FontColor",
-            ImageTransparency = 0.5,
             LayoutOrder = 4,
-            Size = UDim2.fromOffset(16, 16),
+            Size = UDim2.fromOffset(26, 26),
+            Text = "",
             Parent = RightWrapper,
         })
+        New("UICorner", {
+            CornerRadius = UDim.new(0, Library.CornerRadius),
+            Parent = MinimizeButton,
+        })
+        local MinimizeImage = New("ImageLabel", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            BackgroundTransparency = 1,
+            ImageColor3 = "FontColor",
+            ImageTransparency = 0.4,
+            Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.fromOffset(14, 14),
+            Parent = MinimizeButton,
+        })
         if MinimizeIcon then
-            Library:ApplyLucideIcon(MinimizeButton, MinimizeIcon)
+            Library:ApplyLucideIcon(MinimizeImage, MinimizeIcon)
+        end
+
+        local function SetMinimizeHover(Hovering: boolean, Instant: boolean?)
+            local Info = Instant and TweenInfo.new(0) or Library.HoverTweenInfo
+            TweenService:Create(MinimizeButton, Info, {
+                BackgroundTransparency = Hovering and 0 or 1,
+            }):Play()
+            TweenService:Create(MinimizeImage, Info, {
+                ImageTransparency = Hovering and 0 or 0.4,
+            }):Play()
         end
         Library:GiveSignal(MinimizeButton.MouseEnter:Connect(function()
-            TweenService:Create(MinimizeButton, Library.HoverTweenInfo, {
-                ImageTransparency = 0,
-            }):Play()
+            SetMinimizeHover(true)
         end))
         Library:GiveSignal(MinimizeButton.MouseLeave:Connect(function()
-            TweenService:Create(MinimizeButton, Library.HoverTweenInfo, {
-                ImageTransparency = 0.5,
-            }):Play()
+            SetMinimizeHover(false)
         end))
         Library:GiveSignal(MinimizeButton.MouseButton1Click:Connect(function()
+            --// MouseLeave never fires once the window hides, so reset the hover state ourselves
+            SetMinimizeHover(false, true)
             Library:Toggle(false)
         end))
 
