@@ -12118,13 +12118,13 @@ function Library:CreateWindow(WindowInfo)
             Parent = BadgeLabel,
         })
 
-        --// Minimize button: a badge-height square that fills on hover, hides the UI like the toggle keybind
+        --// Minimize button: a square that fills on hover, hides the UI like the toggle keybind
         local MinimizeButton = New("TextButton", {
             AutoButtonColor = false,
             BackgroundColor3 = "MainColor",
             BackgroundTransparency = 1,
             LayoutOrder = 4,
-            Size = UDim2.fromOffset(26, 26),
+            Size = UDim2.fromOffset(30, 30),
             Text = "",
             Parent = RightWrapper,
         })
@@ -12138,7 +12138,7 @@ function Library:CreateWindow(WindowInfo)
             ImageColor3 = "FontColor",
             ImageTransparency = 0.4,
             Position = UDim2.fromScale(0.5, 0.5),
-            Size = UDim2.fromOffset(14, 14),
+            Size = UDim2.fromOffset(17, 17),
             Parent = MinimizeButton,
         })
         if MinimizeIcon then
