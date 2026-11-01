@@ -457,13 +457,25 @@ MenuGroup:AddCheckbox("KeybindMenuVisibilityControl", {
 		Library.KeybindMenu:SetVisibilityControl(Value)
 	end,
 })
+-- The toggle button shows when enabled and the device matches the chosen mode
+local function RefreshToggleButton()
+	local Enabled = Toggles.ShowToggleButton and Toggles.ShowToggleButton.Value
+	local Mode = Options.ToggleButtonMode and Options.ToggleButtonMode.Value or "For Mobile Only"
+	Library:SetToggleButtonVisible(Enabled == true and (Mode == "Both Mobile & PC" or Library.IsMobile))
+end
+
 MenuGroup:AddCheckbox("ShowToggleButton", {
 	Text = "Toggle Button",
-	Default = Library.IsMobile,
-	Callback = function(Value)
-		Library:SetToggleButtonVisible(Value)
-	end,
+	Default = true,
+	Callback = RefreshToggleButton,
 })
+MenuGroup:AddDropdown("ToggleButtonMode", {
+	Text = "Toggle Button Mode",
+	Values = { "For Mobile Only", "Both Mobile & PC" },
+	Default = "For Mobile Only",
+	Callback = RefreshToggleButton,
+})
+RefreshToggleButton()
 MenuGroup:AddDropdown("TabLayout", {
 	Text = "Tab Layout",
 	Values = { "Top", "Side" },
