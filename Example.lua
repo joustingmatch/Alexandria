@@ -469,10 +469,16 @@ MenuGroup:AddCheckbox("ShowToggleButton", {
 	Default = true,
 	Callback = RefreshToggleButton,
 })
+-- Mac users get the toggle button by default too
+local PlatformOk, Platform = pcall(function()
+	return game:GetService("UserInputService"):GetPlatform()
+end)
+local IsMac = PlatformOk and Platform == Enum.Platform.OSX
+
 MenuGroup:AddDropdown("ToggleButtonMode", {
 	Text = "Toggle Button Mode",
 	Values = { "For Mobile Only", "Both Mobile & PC" },
-	Default = "For Mobile Only",
+	Default = IsMac and "Both Mobile & PC" or "For Mobile Only",
 	Callback = RefreshToggleButton,
 })
 RefreshToggleButton()
