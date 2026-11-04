@@ -905,6 +905,32 @@ function ThemeManager:CreateThemeManager(Themesbox: any)
         Library:Notify("Copied size & position to your clipboard")
     end)
 
+    --// Toggle button: shown when enabled and the device matches the chosen mode
+    local function RefreshToggleButton()
+        local Enabled = Library.Toggles.ShowToggleButton and Library.Toggles.ShowToggleButton.Value
+        local Mode = Library.Options.ToggleButtonMode and Library.Options.ToggleButtonMode.Value or "For Mobile Only"
+        Library:SetToggleButtonVisible(Enabled == true and (Mode == "Both Mobile & PC" or Library.IsMobile))
+    end
+
+    --// Mac users get the toggle button by default too
+    local PlatformOk, Platform = pcall(function()
+        return game:GetService("UserInputService"):GetPlatform()
+    end)
+    local IsMac = PlatformOk and Platform == Enum.Platform.OSX
+
+    Themesbox:AddCheckbox("ShowToggleButton", {
+        Text = "Toggle Button",
+        Default = true,
+        Callback = RefreshToggleButton,
+    })
+    Themesbox:AddDropdown("ToggleButtonMode", {
+        Text = "Toggle Button Mode",
+        Values = { "For Mobile Only", "Both Mobile & PC" },
+        Default = IsMac and "Both Mobile & PC" or "For Mobile Only",
+        Callback = RefreshToggleButton,
+    })
+    RefreshToggleButton()
+
     CreateColorOption("Accent", "AccentColor")
     CreateColorOption("Backgrounds", "BackgroundColor")
     CreateColorOption("Main Backgrounds", "MainColor")

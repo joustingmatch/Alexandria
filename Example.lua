@@ -457,31 +457,6 @@ MenuGroup:AddCheckbox("KeybindMenuVisibilityControl", {
 		Library.KeybindMenu:SetVisibilityControl(Value)
 	end,
 })
--- The toggle button shows when enabled and the device matches the chosen mode
-local function RefreshToggleButton()
-	local Enabled = Toggles.ShowToggleButton and Toggles.ShowToggleButton.Value
-	local Mode = Options.ToggleButtonMode and Options.ToggleButtonMode.Value or "For Mobile Only"
-	Library:SetToggleButtonVisible(Enabled == true and (Mode == "Both Mobile & PC" or Library.IsMobile))
-end
-
-MenuGroup:AddCheckbox("ShowToggleButton", {
-	Text = "Toggle Button",
-	Default = true,
-	Callback = RefreshToggleButton,
-})
--- Mac users get the toggle button by default too
-local PlatformOk, Platform = pcall(function()
-	return game:GetService("UserInputService"):GetPlatform()
-end)
-local IsMac = PlatformOk and Platform == Enum.Platform.OSX
-
-MenuGroup:AddDropdown("ToggleButtonMode", {
-	Text = "Toggle Button Mode",
-	Values = { "For Mobile Only", "Both Mobile & PC" },
-	Default = IsMac and "Both Mobile & PC" or "For Mobile Only",
-	Callback = RefreshToggleButton,
-})
-RefreshToggleButton()
 MenuGroup:AddDropdown("TabLayout", {
 	Text = "Tab Layout",
 	Values = { "Top", "Side" },
