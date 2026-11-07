@@ -1094,26 +1094,38 @@ function SaveManager:BuildConfigSection(Tab: any, IconName: string)
             return
         end
 
-        ShowDialog(
-            function(): boolean
-                return true --// Always show
-            end,
+        --// Import only saves the config to the list; the user loads it themselves
+        local SuccessDecode, Decoded = pcall(HttpService.JSONDecode, HttpService, ConfigJSON)
+        if not SuccessDecode or typeof(Decoded) ~= "table" or typeof(Decoded.objects) ~= "table" then
+            Library:Notify("Failed to import config: invalid config JSON.")
+            return
+        end
 
-            "SaveManager_ImportConfig",
-            "Import config",
-            "Are you sure you want to import this configuration? Your current settings will be overwritten.",
+        local Typed = Trim(ConfigNameInput.Value or "")
+        local BaseName = if IsStringEmpty(Typed) or string.lower(Typed) == "autoload" then "Imported" else Typed
+        local ConfigName, Suffix = BaseName, 1
+        while DoesConfigExist(ConfigName) do
+            Suffix += 1
+            ConfigName = string.format("%s %d", BaseName, Suffix)
+        end
 
-            "Import",
-            function()
-                local Success, ErrorMessage = SaveManager:LoadJSON(ConfigJSON)
-                if not Success then
-                    Library:Notify(string.format("Failed to import config: %s", ErrorMessage))
-                    return
-                end
+        local ConfigPath = GetConfigPath(ConfigName)
+        if ConfigPath == false then
+            Library:Notify("Failed to import config: invalid config name.")
+            return
+        end
 
-                Library:Notify("Imported config")
-            end
-        )
+        SaveManager:CheckFolderTree()
+        local SuccessWrite, ErrorMessage = pcall(writefile, ConfigPath, ConfigJSON)
+        if not SuccessWrite then
+            Library:Notify(string.format("Failed to import config: %s", tostring(ErrorMessage)))
+            return
+        end
+
+        ConfigJSONInput:SetValue("")
+        RefreshList()
+        ConfigList:SetValue(ConfigName)
+        Library:Notify(string.format("Imported config as %q. Load it from the list when you're ready.", ConfigName))
     end)
 
     --// Set variables
