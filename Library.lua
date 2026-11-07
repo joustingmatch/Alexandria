@@ -1766,7 +1766,6 @@ end
 
 --// Icon Instances \\--
 local IconTextProperties = { ImageColor3 = "TextColor3", ImageTransparency = "TextTransparency" }
-local IconSharedProperties = { "Name", "AnchorPoint", "Position", "Size", "SizeConstraint", "LayoutOrder", "ZIndex", "Visible", "Rotation", "ImageColor3", "ImageTransparency" }
 
 local function IconProperties(ClassName: string, Properties: { [string]: any }): { [string]: any }
     if ClassName ~= "TextLabel" and ClassName ~= "TextButton" then
@@ -1779,10 +1778,6 @@ local function IconProperties(ClassName: string, Properties: { [string]: any }):
     end
 
     return Mapped
-end
-
-local function IsFontIcon(Icon: Icon?): boolean
-    return Icon ~= nil and Icon.FontFace ~= nil
 end
 
 local function ImageContent(Icon: Icon?): { [string]: any }
@@ -1804,18 +1799,14 @@ local function TweenIcon(Target: GuiObject, Properties: { [string]: any }): Twee
     return Tween
 end
 
+--// Icons are always Image instances; font icons render through ApplyLucideIcon's text overlay,
+--// so callers can keep tweening ImageColor3/ImageTransparency directly
 function Library:CreateIcon(Icon: Icon?, Properties: { [string]: any }?, IsButton: boolean?): GuiObject
-    local IsFont = IsFontIcon(Icon)
-    local ClassName = (if IsFont then "Text" else "Image") .. (if IsButton then "Button" else "Label")
-
     local Merged: { [string]: any } = {
         BackgroundTransparency = 1,
         ImageColor3 = Color3.new(1, 1, 1),
+        ScaleType = Enum.ScaleType.Fit,
     }
-
-    if not IsFont then
-        Merged.ScaleType = Enum.ScaleType.Fit
-    end
 
     if Properties then
         for Property, Value in Properties do
@@ -1823,47 +1814,22 @@ function Library:CreateIcon(Icon: Icon?, Properties: { [string]: any }?, IsButto
         end
     end
 
-    return Library:ApplyIcon(New(ClassName, IconProperties(ClassName, Merged)), Icon)
+    return Library:ApplyIcon(New(if IsButton then "ImageButton" else "ImageLabel", Merged), Icon)
 end
 
 function Library:ApplyIcon(Target: GuiObject, Icon: Icon?): GuiObject
-    local IsFont = IsFontIcon(Icon)
-    local IsText = Target:IsA("TextLabel") or Target:IsA("TextButton")
-
-    if IsFont ~= IsText then
-        local Theme = Library.Registry[Target] or {}
-        local Properties: { [string]: any } = { Parent = Target.Parent }
-
-        for _, Property in IconSharedProperties do
-            local Source = if IsText then IconTextProperties[Property] or Property else Property
-            Properties[Property] = if Theme[Source] ~= nil then Theme[Source] else (Target :: any)[Source]
-        end
-
-        local Replacement = Library:CreateIcon(Icon, Properties, Target:IsA("GuiButton"))
-        Library:RemoveFromRegistry(Target)
-        Target:Destroy()
-
-        return Replacement
+    if not (Target:IsA("ImageLabel") or Target:IsA("ImageButton")) then
+        return Target
     end
 
-    if IsFont and Icon then
-        FillInstance({
-            FontFace = Icon.FontFace,
-            RichText = false,
-            Text = Icon.Text,
-            TextScaled = true,
-        }, Target)
-
-        if not Target:FindFirstChild("IconPadding") then
-            New("UIPadding", {
-                Name = "IconPadding",
-                PaddingLeft = UDim.new(-0.5, -0.5),
-                PaddingRight = UDim.new(-0.5, 0),
-                Parent = Target,
-            })
-        end
+    if Icon then
+        Library:ApplyLucideIcon(Target, Icon)
     else
-        FillInstance(ImageContent(Icon), Target)
+        local FontLabel = Target:FindFirstChild("__IconFont")
+        if FontLabel then
+            FontLabel:Destroy()
+        end
+        FillInstance(ImageContent(nil), Target)
     end
 
     return Target
