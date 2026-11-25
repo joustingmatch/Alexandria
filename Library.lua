@@ -162,6 +162,12 @@ end
 
 local Library = {
     LocalPlayer = LocalPlayer,
+
+    --// Spoiler: hides your username/display name behind dots. On by default.
+    Spoiler = true,
+    SpoilerLabels = {},
+    SpoilerButton = nil :: any,
+    RefreshSpoilerButton = nil :: (() -> ())?,
     QuickConfigProvider = nil :: any, --// set by Window:SetQuickConfig (SaveManager does it for you)
     IsRobloxFocused = true,
 
@@ -1005,6 +1011,48 @@ local function GetTeams()
     end)
 
     return TeamList
+end
+
+--// Registers a label whose text should be dotted out while spoiler mode is on.
+function Library:AddSpoilerLabel(Label: any)
+    Library.SpoilerLabels[Label] = Label.Text
+    Library:RefreshSpoilers()
+    return Label
+end
+
+--// Updates the real (unmasked) text of a registered label
+function Library:SetSpoilerText(Label: any, Text: string)
+    Library.SpoilerLabels[Label] = Text
+    Label.Text = if Library.Spoiler then Library:MaskText(Text) else Text
+end
+
+function Library:MaskText(Text: string): string
+    local Length = math.clamp(utf8.len(Text) or #Text, 3, 12)
+    return string.rep("\u{2022}", Length)
+end
+
+function Library:RefreshSpoilers()
+    for Label, Real in Library.SpoilerLabels do
+        if typeof(Label) ~= "Instance" or not Label.Parent then
+            Library.SpoilerLabels[Label] = nil
+            continue
+        end
+
+        Label.Text = if Library.Spoiler then Library:MaskText(Real) else Real
+    end
+end
+
+function Library:SetSpoiler(Enabled: boolean)
+    Library.Spoiler = Enabled and true or false
+    Library:RefreshSpoilers()
+
+    if Library.RefreshSpoilerButton then
+        Library.RefreshSpoilerButton()
+    end
+end
+
+function Library:ToggleSpoiler()
+    Library:SetSpoiler(not Library.Spoiler)
 end
 
 function Library:UpdateDependencyBoxes()
@@ -12514,7 +12562,7 @@ function Library:CreateWindow(WindowInfo)
             BackgroundTransparency = 1,
             FontFace = "FontBold",
             Position = UDim2.new(0, 52, 0.5, -15),
-            Size = UDim2.new(1, -60, 0, 15),
+            Size = UDim2.new(1, -96, 0, 15),
             Text = LocalPlayer.DisplayName,
             TextSize = 13,
             TextTruncate = Enum.TextTruncate.AtEnd,
@@ -12535,6 +12583,44 @@ function Library:CreateWindow(WindowInfo)
         })
         Library.ProfileName = ProfileName
         Library.ProfileGame = ProfileGame
+        Library:AddSpoilerLabel(ProfileName)
+
+        --// Spoiler button: dots out your name. Baked in and enabled by default.
+        local SpoilerButton = New("TextButton", {
+            AnchorPoint = Vector2.new(1, 0.5),
+            AutoButtonColor = false,
+            BackgroundColor3 = "BackgroundColor",
+            BackgroundTransparency = 0.35,
+            FontFace = "FontBold",
+            Position = UDim2.new(1, -8, 0.5, 0),
+            Size = UDim2.fromOffset(36, 20),
+            Text = if Library.Spoiler then "SHOW" else "HIDE",
+            TextColor3 = "MutedFontColor",
+            TextSize = 10,
+            Parent = ProfileCard,
+        })
+        New("UICorner", {
+            CornerRadius = UDim.new(1, 0),
+            Parent = SpoilerButton,
+        })
+
+        local function RefreshSpoilerButton()
+            SpoilerButton.Text = if Library.Spoiler then "SHOW" else "HIDE"
+        end
+
+        SpoilerButton.MouseButton1Click:Connect(function()
+            Library:ToggleSpoiler()
+            RefreshSpoilerButton()
+        end)
+        SpoilerButton.MouseEnter:Connect(function()
+            SpoilerButton.BackgroundTransparency = 0.1
+        end)
+        SpoilerButton.MouseLeave:Connect(function()
+            SpoilerButton.BackgroundTransparency = 0.35
+        end)
+
+        Library.SpoilerButton = SpoilerButton
+        Library.RefreshSpoilerButton = RefreshSpoilerButton
 
         task.spawn(function()
             local Ok, Image = pcall(function()
@@ -13702,7 +13788,7 @@ function Library:CreateWindow(WindowInfo)
     --// Muted text left of the badge; nil hides it
     function Window:SetUsername(Username: string?)
         WindowInfo.Username = Username
-        UsernameLabel.Text = Username or ""
+        Library:SetSpoilerText(UsernameLabel, Username or "")
         UsernameLabel.Visible = typeof(Username) == "string" and Username ~= ""
     end
 
@@ -13998,7 +14084,7 @@ function Library:CreateWindow(WindowInfo)
             WindowInfo.ShowProfile = true
             if typeof(Info) == "table" then
                 if Info.Name then
-                    Library.ProfileName.Text = tostring(Info.Name)
+                    Library:SetSpoilerText(Library.ProfileName, tostring(Info.Name))
                 end
                 if Info.Game then
                     Library.ProfileGame.Text = tostring(Info.Game)
