@@ -23,6 +23,11 @@ local Window = Library:CreateWindow({
 
 	NotifySide = "Right",
 
+	-- The Discord tab is built in: every window gets one, already filled in with
+	-- discord.gg/synapsex and getalexandria.xyz from Library.Discord.
+	-- Override any of it here, or set Discord = false to leave the tab out.
+	-- Discord = { Invite = "https://discord.gg/synapsex" },
+
 	-- Optional:
 	-- Size = UDim2.fromOffset(580, 640),
 	-- Center = true, AutoShow = true, Resizable = true,

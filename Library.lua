@@ -286,6 +286,26 @@ local Library = {
     DPIScale = 1,
     CornerRadius = 6,
 
+    --// Built-in Discord tab \\--
+    --// Edit these once and every window ships with the tab filled in.
+    --// Set Library.Discord.Enabled = false (or Discord = false on CreateWindow) to leave it out.
+    Discord = {
+        Enabled = true,
+        Name = "Discord",
+        Icon = "message-circle",
+        Description = "Our server",
+
+        Title = "Alexandria",
+        Invite = "https://discord.gg/synapsex",
+        Text = "Updates, support and new releases all land in the server first.",
+        Links = {
+            { Text = "Website", Url = "https://getalexandria.xyz/" },
+        },
+
+        Fetch = true,
+        Order = 9999,
+    },
+
     --// Scheme \\--
     --// SurfaceColor, MutedFontColor, HoverColor, InlineColor, DarkAccentColor, ToggleOffColor,
     --// FontMedium and FontBold are derived from these when a theme omits them
@@ -16526,6 +16546,679 @@ function Library:CreateWindow(WindowInfo)
         return Tab
     end
 
+    --// A baked-in Discord tab: server card, live counts and one-click invite copy
+    function Window:AddDiscordTab(...)
+        local Info
+
+        if select("#", ...) == 1 and typeof(...) == "table" then
+            Info = select(1, ...)
+        elseif select("#", ...) > 1 then
+            Info = { Name = select(1, ...), Invite = select(2, ...) }
+        else
+            Info = { Invite = select(1, ...) }
+        end
+        Info = Info or {}
+
+        local Name = Info.Name or "Discord"
+        local Description = Info.Description
+        local Tooltip = Info.Tooltip
+        local Order = Info.Order
+        local Icon = Info.Icon or "message-circle"
+
+        if not tonumber(Order) then
+            Order = #Tabs:GetChildren()
+        end
+
+        --// Invite may be a bare code, discord.gg/code or a full url \\--
+        local Invite = if typeof(Info.Invite) == "string" then Info.Invite else ""
+        local InviteCode = Invite:match("([%w%-]+)%s*$") or ""
+        local InviteLink = if Invite:match("^https?://") then Invite else string.format("https://discord.gg/%s", InviteCode)
+
+        local TabButton: TextButton
+        local TabLabel
+        local TabIcon
+        local TabStroke
+        local TabContainer
+
+        Icon = Library:GetCustomIcon(Icon)
+        do
+            TabButton, TabLabel, TabIcon, TabStroke = CreateTabButton(Name, Icon, Order)
+
+            --// Tab Container \\--
+            TabContainer = New("ScrollingFrame", {
+                AutomaticCanvasSize = Enum.AutomaticSize.Y,
+                BackgroundTransparency = 1,
+                CanvasSize = UDim2.fromScale(0, 0),
+                ScrollBarThickness = 0,
+                Position = UDim2.fromScale(0, 0),
+                Size = UDim2.fromScale(1, 1),
+                Visible = false,
+                Parent = Container,
+            })
+            New("UIListLayout", {
+                HorizontalAlignment = Enum.HorizontalAlignment.Center,
+                Padding = UDim.new(0, 8),
+                VerticalAlignment = Enum.VerticalAlignment.Center,
+                Parent = TabContainer,
+            })
+            New("UIPadding", {
+                PaddingLeft = UDim.new(0, 1),
+                PaddingRight = UDim.new(0, 1),
+                Parent = TabContainer,
+            })
+        end
+
+        --// Tab Table \\--
+        local Tab = {
+            Description = Description,
+            IsDiscordTab = true,
+
+            Invite = InviteLink,
+            InviteCode = InviteCode,
+
+            Tooltip = Tooltip,
+            TooltipTable = nil,
+
+            Elements = {},
+
+            Window = Window,
+            Button = TabButton,
+            Container = TabContainer,
+        }
+
+        local function Corner(Parent, Radius)
+            table.insert(
+                Library.Corners,
+                New("UICorner", {
+                    CornerRadius = UDim.new(0, Radius or Library.CornerRadius),
+                    Parent = Parent,
+                })
+            )
+        end
+
+        --// Card \\--
+        local Card = New("Frame", {
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundColor3 = "BackgroundColor",
+            Size = UDim2.new(1, -16, 0, 0),
+            Parent = TabContainer,
+        })
+        New("UISizeConstraint", {
+            MaxSize = Vector2.new(360, math.huge),
+            Parent = Card,
+        })
+        New("UIStroke", {
+            Color = "OutlineColor",
+            Parent = Card,
+        })
+        Corner(Card)
+        New("UIPadding", {
+            PaddingBottom = UDim.new(0, 16),
+            PaddingLeft = UDim.new(0, 18),
+            PaddingRight = UDim.new(0, 18),
+            PaddingTop = UDim.new(0, 16),
+            Parent = Card,
+        })
+        New("UIListLayout", {
+            Padding = UDim.new(0, 12),
+            Parent = Card,
+        })
+
+        --// Header: avatar, server name, invite handle \\--
+        local Header = New("Frame", {
+            BackgroundTransparency = 1,
+            LayoutOrder = 1,
+            Size = UDim2.new(1, 0, 0, 44),
+            Parent = Card,
+        })
+        New("UIListLayout", {
+            FillDirection = Enum.FillDirection.Horizontal,
+            Padding = UDim.new(0, 11),
+            VerticalAlignment = Enum.VerticalAlignment.Center,
+            Parent = Header,
+        })
+
+        local Avatar = New("Frame", {
+            BackgroundColor3 = "MainColor",
+            Size = UDim2.fromOffset(44, 44),
+            Parent = Header,
+        })
+        Corner(Avatar, 14)
+        New("UIStroke", {
+            Color = "OutlineColor",
+            Parent = Avatar,
+        })
+
+        local ServerName = Info.Title or Info.Server or Name
+        local AvatarIcon = if Info.Image then Library:GetCustomIcon(Info.Image) else nil
+
+        if AvatarIcon then
+            local Image = Library:CreateIcon(AvatarIcon, {
+                Size = UDim2.fromScale(1, 1),
+                Parent = Avatar,
+            })
+            Corner(Image, 14)
+        else
+            --// No image given, so fall back to the initials of the server name
+            local Initials = ""
+            for Word in ServerName:gmatch("[%w]+") do
+                Initials = Initials .. string.upper(string.sub(Word, 1, 1))
+                if #Initials >= 2 then
+                    break
+                end
+            end
+
+            New("TextLabel", {
+                BackgroundTransparency = 1,
+                FontFace = "FontBold",
+                Size = UDim2.fromScale(1, 1),
+                Text = if Initials ~= "" then Initials else "D",
+                TextSize = 17,
+                Parent = Avatar,
+            })
+        end
+
+        local Titles = New("Frame", {
+            BackgroundTransparency = 1,
+            LayoutOrder = 1,
+            Size = UDim2.new(1, -55, 1, 0),
+            Parent = Header,
+        })
+        New("UIListLayout", {
+            Padding = UDim.new(0, 2),
+            VerticalAlignment = Enum.VerticalAlignment.Center,
+            Parent = Titles,
+        })
+
+        local NameLabel = New("TextLabel", {
+            BackgroundTransparency = 1,
+            FontFace = "FontBold",
+            Size = UDim2.new(1, 0, 0, 18),
+            Text = ServerName,
+            TextSize = 16,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Parent = Titles,
+        })
+
+        local HandleLabel = New("TextLabel", {
+            BackgroundTransparency = 1,
+            LayoutOrder = 1,
+            Size = UDim2.new(1, 0, 0, 15),
+            Text = if InviteCode ~= "" then "discord.gg/" .. InviteCode else (Info.Subtitle or ""),
+            TextColor3 = "MutedFontColor",
+            TextSize = 13,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Parent = Titles,
+        })
+        HandleLabel.Visible = HandleLabel.Text ~= ""
+
+        --// Presence pills \\--
+        local Stats = New("Frame", {
+            BackgroundTransparency = 1,
+            LayoutOrder = 2,
+            Size = UDim2.new(1, 0, 0, 24),
+            Parent = Card,
+        })
+        New("UIListLayout", {
+            FillDirection = Enum.FillDirection.Horizontal,
+            Padding = UDim.new(0, 6),
+            Parent = Stats,
+        })
+
+        local function Pill(PillOrder, DotColor)
+            local Holder = New("Frame", {
+                AutomaticSize = Enum.AutomaticSize.X,
+                BackgroundColor3 = "MainColor",
+                LayoutOrder = PillOrder,
+                Size = UDim2.fromScale(0, 1),
+                Parent = Stats,
+            })
+            Corner(Holder, 12)
+            New("UIStroke", {
+                Color = "OutlineColor",
+                Parent = Holder,
+            })
+            New("UIPadding", {
+                PaddingLeft = UDim.new(0, 9),
+                PaddingRight = UDim.new(0, 10),
+                Parent = Holder,
+            })
+            New("UIListLayout", {
+                FillDirection = Enum.FillDirection.Horizontal,
+                Padding = UDim.new(0, 6),
+                VerticalAlignment = Enum.VerticalAlignment.Center,
+                Parent = Holder,
+            })
+
+            local Dot = New("Frame", {
+                BackgroundColor3 = DotColor,
+                Size = UDim2.fromOffset(6, 6),
+                Parent = Holder,
+            })
+            Corner(Dot, 3)
+
+            local DotLabel = New("TextLabel", {
+                AutomaticSize = Enum.AutomaticSize.X,
+                BackgroundTransparency = 1,
+                LayoutOrder = 1,
+                Size = UDim2.fromScale(0, 1),
+                Text = "",
+                TextColor3 = "MutedFontColor",
+                TextSize = 12,
+                Parent = Holder,
+            })
+
+            return Holder, DotLabel, Dot
+        end
+
+        local OnlinePill, OnlineLabel, OnlineDot = Pill(0, Color3.fromRGB(70, 190, 125))
+        local MembersPill, MembersLabel = Pill(1, "OutlineColor")
+
+        --// A slow breathe on the online dot, so the card feels alive without blinking at you \\--
+        local Pulse = New("UIScale", { Parent = OnlineDot })
+        task.spawn(function()
+            while OnlineDot.Parent do
+                TweenService:Create(Pulse, TweenInfo.new(1.1, Enum.EasingStyle.Sine), { Scale = 1.4 }):Play()
+                task.wait(1.2)
+
+                if not OnlineDot.Parent then
+                    break
+                end
+
+                TweenService:Create(Pulse, TweenInfo.new(1.1, Enum.EasingStyle.Sine), { Scale = 1 }):Play()
+                task.wait(1.5)
+            end
+        end)
+
+        New("Frame", {
+            BackgroundColor3 = "OutlineColor",
+            LayoutOrder = 3,
+            Size = UDim2.new(1, 0, 0, 1),
+            Parent = Card,
+        })
+
+        --// Blurb \\--
+        local Blurb = New("TextLabel", {
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            LayoutOrder = 4,
+            Size = UDim2.fromScale(1, 0),
+            Text = Info.Text or "Updates, support and releases all land in the server first.",
+            TextColor3 = "MutedFontColor",
+            TextSize = 13,
+            TextWrapped = true,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Parent = Card,
+        })
+
+        --// Buttons \\--
+        local function MakeButton(ButtonText, Primary, Parent, ButtonOrder, Size)
+            local BgKey = if Primary then "AccentColor" else "MainColor"
+            local Button = New("TextButton", {
+                BackgroundColor3 = BgKey,
+                FontFace = "FontBold",
+                LayoutOrder = ButtonOrder,
+                Size = Size,
+                Text = ButtonText,
+                TextColor3 = if Primary then "BackgroundColor" else "FontColor",
+                TextSize = 14,
+                Parent = Parent,
+            })
+            Corner(Button)
+            if not Primary then
+                New("UIStroke", {
+                    ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+                    Color = "OutlineColor",
+                    Parent = Button,
+                })
+            end
+
+            local Scale = New("UIScale", { Parent = Button })
+            BindInteraction(Button, {
+                Scale = Scale,
+                PressScale = 0.97,
+                OnHover = function(Hovering)
+                    local Base = Library.Scheme[BgKey]
+                    TweenService:Create(Button, Library.TweenInfo, {
+                        BackgroundColor3 = if Hovering then Library:GetBetterColor(Base, if Primary then -12 else 8) else Base,
+                    }):Play()
+                end,
+            })
+
+            return Button
+        end
+
+        local function RunAction(Action, Copied)
+            if typeof(Action) == "function" then
+                Action()
+            elseif typeof(Action) == "string" then
+                if setclipboard then
+                    setclipboard(Action)
+                end
+                Library:Notify({
+                    Title = Copied,
+                    Description = if setclipboard then "Link copied to clipboard." else Action,
+                    Time = 3,
+                })
+            end
+        end
+
+        local JoinText = Info.ButtonText or "Copy invite"
+        local JoinButton = MakeButton(JoinText, true, Card, 5, UDim2.new(1, 0, 0, 32))
+        JoinButton.Visible = InviteCode ~= "" or Info.Callback ~= nil
+
+        JoinButton.MouseButton1Click:Connect(function()
+            if Info.Callback then
+                Info.Callback(InviteLink)
+            end
+
+            if setclipboard then
+                setclipboard(InviteLink)
+
+                JoinButton.Text = "Copied"
+                task.delay(1.4, function()
+                    if JoinButton.Parent then
+                        JoinButton.Text = JoinText
+                    end
+                end)
+            end
+
+            Library:Notify({
+                Title = ServerName,
+                Description = if setclipboard then InviteLink .. " copied to clipboard." else InviteLink,
+                Time = 4,
+            })
+        end)
+
+        --// Extra links: { { Text = "Website", Url = "https://..." }, ... } \\--
+        local Links = Info.Links
+        if typeof(Links) == "table" and #Links > 0 then
+            local Row = New("Frame", {
+                BackgroundTransparency = 1,
+                LayoutOrder = 6,
+                Size = UDim2.new(1, 0, 0, 30),
+                Parent = Card,
+            })
+            New("UIListLayout", {
+                FillDirection = Enum.FillDirection.Horizontal,
+                Padding = UDim.new(0, 8),
+                Parent = Row,
+            })
+
+            local Gap = 8 * (#Links - 1) / #Links
+            for Index, Entry in Links do
+                local LinkText = Entry.Text or Entry[1] or "Link"
+                local Action = Entry.Action or Entry.Url or Entry[2]
+                local Button = MakeButton(LinkText, false, Row, Index, UDim2.new(1 / #Links, -Gap, 1, 0))
+
+                Button.MouseButton1Click:Connect(function()
+                    RunAction(Action, LinkText)
+                end)
+            end
+        end
+
+        local Footer = New("TextLabel", {
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            LayoutOrder = 7,
+            Size = UDim2.fromScale(1, 0),
+            Text = Info.Footer or "",
+            TextColor3 = "MutedFontColor",
+            TextSize = 12,
+            TextWrapped = true,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Parent = Card,
+        })
+        Footer.Visible = Footer.Text ~= ""
+
+        --// Counts \\--
+        local function Format(Number)
+            if typeof(Number) ~= "number" then
+                return nil
+            end
+
+            if Number >= 1000000 then
+                return (string.format("%.1fM", Number / 1000000):gsub("%.0M", "M"))
+            elseif Number >= 1000 then
+                return (string.format("%.1fK", Number / 1000):gsub("%.0K", "K"))
+            end
+
+            return tostring(math.floor(Number))
+        end
+
+        function Tab:SetCounts(Online: number?, Members: number?)
+            local OnlineText = Format(Online)
+            local MembersText = Format(Members)
+
+            OnlinePill.Visible = OnlineText ~= nil
+            MembersPill.Visible = MembersText ~= nil
+            Stats.Visible = OnlinePill.Visible or MembersPill.Visible
+
+            OnlineLabel.Text = if OnlineText then OnlineText .. " online" else ""
+            MembersLabel.Text = if MembersText then MembersText .. " members" else ""
+        end
+
+        Tab:SetCounts(Info.Online, Info.Members)
+
+        --// Live invite lookup, when the executor can make requests \\--
+        function Tab:Refresh()
+            if InviteCode == "" then
+                return
+            end
+
+            local Request = (syn and syn.request) or (http and http.request) or http_request or request
+            if typeof(Request) ~= "function" then
+                return
+            end
+
+            task.spawn(function()
+                local Success, Response = pcall(Request, {
+                    Url = string.format("https://discord.com/api/v10/invites/%s?with_counts=true", InviteCode),
+                    Method = "GET",
+                })
+                if not Success or typeof(Response) ~= "table" or typeof(Response.Body) ~= "string" then
+                    return
+                end
+
+                local Decoded
+                Success, Decoded = pcall(function()
+                    return cloneref(game:GetService("HttpService")):JSONDecode(Response.Body)
+                end)
+                if not Success or typeof(Decoded) ~= "table" then
+                    return
+                end
+
+                if not Info.Title and typeof(Decoded.guild) == "table" and typeof(Decoded.guild.name) == "string" then
+                    ServerName = Decoded.guild.name
+                    NameLabel.Text = ServerName
+                end
+
+                Tab:SetCounts(Decoded.approximate_presence_count, Decoded.approximate_member_count)
+            end)
+        end
+
+        if Info.Fetch ~= false then
+            Tab:Refresh()
+        end
+
+        function Tab:SetInvite(NewInvite: string)
+            Invite = if typeof(NewInvite) == "string" then NewInvite else ""
+            InviteCode = Invite:match("([%w%-]+)%s*$") or ""
+            InviteLink = if Invite:match("^https?://") then Invite else string.format("https://discord.gg/%s", InviteCode)
+
+            Tab.Invite = InviteLink
+            Tab.InviteCode = InviteCode
+
+            HandleLabel.Text = if InviteCode ~= "" then "discord.gg/" .. InviteCode else ""
+            HandleLabel.Visible = HandleLabel.Text ~= ""
+            JoinButton.Visible = InviteCode ~= "" or Info.Callback ~= nil
+        end
+
+        function Tab:SetServerName(NewName: string)
+            ServerName = NewName or Name
+            NameLabel.Text = ServerName
+        end
+
+        function Tab:SetText(NewText: string)
+            Blurb.Text = NewText or ""
+        end
+
+        function Tab:Destroy()
+            if TabContainer then
+                TabContainer:Destroy()
+            end
+
+            if TabButton then
+                for Index, Entry in Library.TabButtons do
+                    if typeof(Entry) == "table" and Entry.Button == TabButton then
+                        table.remove(Library.TabButtons, Index)
+                        break
+                    end
+                end
+
+                TabButton:Destroy()
+            end
+
+            Library.Tabs[Name] = nil
+        end
+
+        function Tab:SetOrder(NewOrder: number)
+            Order = NewOrder
+            TabButton.LayoutOrder = Order
+        end
+
+        function Tab:RefreshSides() end
+        function Tab:Resize() end
+        function Tab:UpdateCorners() end
+
+        function Tab:Hover(Hovering)
+            if Library.ActiveTab == Tab then
+                return
+            end
+
+            TweenService:Create(TabLabel, Library.TweenInfo, {
+                TextTransparency = if Hovering then 0.25 else 0.5,
+            }):Play()
+            if TabIcon then
+                TweenIcon(TabIcon, { ImageTransparency = if Hovering then 0.25 else 0.5 })
+            end
+        end
+
+        function Tab:Show()
+            if Library.ActiveTab == Tab then
+                return
+            end
+
+            if Library.ActiveTab then
+                Library.ActiveTab:Hide()
+            end
+
+            TweenService:Create(TabButton, Library.TweenInfo, {
+                BackgroundTransparency = 0,
+            }):Play()
+            TweenService:Create(TabStroke, Library.TweenInfo, {
+                Transparency = 0,
+            }):Play()
+            TweenService:Create(TabLabel, Library.TweenInfo, {
+                TextTransparency = 0,
+            }):Play()
+
+            if TabIcon then
+                TweenIcon(TabIcon, { ImageTransparency = 0 })
+            end
+
+            Library:PlayTabAnimation(Tab, true)
+
+            Window:ShowTabInfo(Name, Description)
+
+            Tab:RefreshSides()
+
+            Library.ActiveTab = Tab
+            SyncSubTabStrips()
+
+            if Library.Searching then
+                Library:UpdateSearch(Library.SearchText)
+            end
+        end
+
+        function Tab:Hide()
+            TweenService:Create(TabButton, Library.TweenInfo, {
+                BackgroundTransparency = 1,
+            }):Play()
+            TweenService:Create(TabStroke, Library.TweenInfo, {
+                Transparency = 1,
+            }):Play()
+            TweenService:Create(TabLabel, Library.TweenInfo, {
+                TextTransparency = 0.5,
+            }):Play()
+
+            if TabIcon then
+                TweenIcon(TabIcon, { ImageTransparency = 0.5 })
+            end
+
+            Library:PlayTabAnimation(Tab, false)
+            Window:HideTabInfo()
+
+            Library.PreviousTab = Tab
+            Library.ActiveTab = nil
+        end
+
+        function Tab:SetVisible(Visible: boolean)
+            TabButton.Visible = Visible
+
+            if not Visible and Library.ActiveTab == Tab then
+                Tab:Hide()
+            end
+        end
+
+        function Tab:SetTooltip(TooltipText: string?)
+            Tab.Tooltip = TooltipText
+
+            if Tab.TooltipTable then
+                Tab.TooltipTable:Destroy()
+                Tab.TooltipTable = nil
+            end
+
+            if typeof(TooltipText) == "string" then
+                Tab.TooltipTable = Library:AddTooltip(TooltipText, nil, TabButton)
+            end
+        end
+
+        --// Execution \\--
+        if typeof(Tooltip) == "string" then
+            Tab.TooltipTable = Library:AddTooltip(Tooltip, nil, TabButton)
+        end
+
+        if Info.AutoShow == false then
+            --// The built-in tab never steals the opening page; it only shows if nothing else claims it
+            task.defer(function()
+                if not Library.ActiveTab and TabButton.Parent then
+                    Tab:Show()
+                end
+            end)
+        elseif not Library.ActiveTab then
+            Tab:Show()
+        end
+
+        TabButton.MouseEnter:Connect(function()
+            Tab:Hover(true)
+        end)
+        TabButton.MouseLeave:Connect(function()
+            Tab:Hover(false)
+        end)
+        TabButton.MouseButton1Click:Connect(Tab.Show)
+
+        Tab.Card = Card
+        Tab.Container = TabContainer
+        setmetatable(Tab, BaseGroupbox)
+
+        Library.Tabs[Name] = Tab
+
+        return Tab
+    end
+
     function Window:AddCustomTab(...)
         local Name = nil
         local Icon = nil
@@ -17872,6 +18565,35 @@ function Library:CreateWindow(WindowInfo)
 
     Window.MainFrame = MainFrame
     Library.Window = Window
+
+    --// Baked-in Discord tab: every window gets one unless it is turned off \\--
+    do
+        local Config = WindowInfo.Discord
+        if typeof(Config) == "string" then
+            Config = { Invite = Config }
+        elseif typeof(Config) ~= "table" then
+            Config = {}
+        end
+
+        local Enabled = WindowInfo.Discord ~= false
+            and Config.Enabled ~= false
+            and Library.Discord.Enabled ~= false
+
+        if Enabled then
+            local Info = {}
+            for Key, Value in Library.Discord do
+                Info[Key] = Value
+            end
+            for Key, Value in Config do
+                Info[Key] = Value
+            end
+
+            Info.Enabled = nil
+            Info.AutoShow = false
+
+            Window.Discord = Window:AddDiscordTab(Info)
+        end
+    end
 
     return Window
 end

@@ -1179,6 +1179,70 @@ export type KeyTab = BaseGroupbox & {
     Destroy: (self: KeyTab) -> (),
 }
 
+export type DiscordLink = {
+    Text: string?,
+    Url: string?,
+    Action: (() -> ())?,
+}
+
+export type DiscordTabInfo = {
+    Enabled: boolean?,
+    AutoShow: boolean?,
+    Name: string?,
+    Icon: string?,
+    Description: string?,
+    Tooltip: string?,
+    Order: number?,
+
+    --// Bare code, discord.gg/code or a full url
+    Invite: string?,
+    --// Server card
+    Title: string?,
+    Server: string?,
+    Subtitle: string?,
+    Image: string?,
+    Text: string?,
+    Footer: string?,
+    --// Counts shown until (or instead of) a live lookup
+    Online: number?,
+    Members: number?,
+    Fetch: boolean?,
+    --// Buttons
+    ButtonText: string?,
+    Callback: ((Invite: string) -> ())?,
+    Links: { DiscordLink }?,
+}
+
+export type DiscordTab = BaseGroupbox & {
+    Description: string?,
+    IsDiscordTab: true,
+    Invite: string,
+    InviteCode: string,
+    Tooltip: string?,
+    TooltipTable: Tooltip?,
+    Elements: { [any]: any },
+    Window: Window,
+    Button: TextButton,
+    Container: ScrollingFrame,
+    Card: Frame,
+
+    SetCounts: (self: DiscordTab, Online: number?, Members: number?) -> (),
+    Refresh: (self: DiscordTab) -> (),
+    SetInvite: (self: DiscordTab, Invite: string) -> (),
+    SetServerName: (self: DiscordTab, Name: string) -> (),
+    SetText: (self: DiscordTab, Text: string) -> (),
+    RefreshSides: (self: DiscordTab) -> (),
+    Resize: (self: DiscordTab) -> (),
+    UpdateCorners: (self: DiscordTab) -> (),
+    Hover: (self: DiscordTab, Hovering: boolean) -> (),
+    Show: (self: DiscordTab) -> (),
+    Hide: (self: DiscordTab) -> (),
+    SetVisible: (self: DiscordTab, Visible: boolean) -> (),
+    SetOrder: (self: DiscordTab, Order: number) -> (),
+    SetTooltip: (self: DiscordTab, Text: string?) -> (),
+    Destroy: (self: DiscordTab) -> (),
+}
+
 export type CustomTab = {
     Name: string,
     Description: string?,
@@ -1321,6 +1385,9 @@ export type WindowAnimations = {
 }
 
 export type WindowInfo = {
+    --// The built-in Discord tab: false removes it, a string sets the invite,
+    --// a table overrides any of the Library.Discord defaults
+    Discord: (false | string | DiscordTabInfo)?,
     Title: string?,
     Footer: string?,
     Version: string? | number?,
@@ -1382,6 +1449,8 @@ export type Window = {
     AlwaysOnTop: boolean,
     Snapping: boolean?,
     MainFrame: Frame?,
+    --// The built-in Discord tab, unless it was turned off
+    Discord: DiscordTab?,
 
     IsSidebarCompacted: (self: Window) -> boolean,
     GetSidebarWidth: (self: Window) -> number,
@@ -1410,6 +1479,8 @@ export type Window = {
         Description: string?,
         Order: number?
     ) -> KeyTab,
+    AddDiscordTab: ((self: Window, Info: DiscordTabInfo) -> DiscordTab)
+        & ((self: Window, Name: string, Invite: string?) -> DiscordTab),
     AddCustomTab: (
         self: Window,
         Info: TabInfo | string,

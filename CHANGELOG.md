@@ -1,3 +1,11 @@
+## 25.11.2026
+
+```diff
+[changes]
++ Every window now ships with a built-in Discord tab (discord.gg/synapsex, getalexandria.xyz): server card, live member/online counts, invite copy and a website button
++ Configure it with Discord = { ... } on CreateWindow or Library.Discord, turn it off with Discord = false, or build extra ones with Window:AddDiscordTab
+```
+
 ## 06.11.2026
 
 ```diff
