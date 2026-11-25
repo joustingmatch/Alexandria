@@ -16709,26 +16709,30 @@ function Library:CreateWindow(WindowInfo)
             Parent = Header,
         })
 
-        local Avatar = New("Frame", {
-            BackgroundColor3 = "MainColor",
-            Size = UDim2.fromOffset(44, 44),
-            Parent = Header,
-        })
-        Corner(Avatar, 14)
-        New("UIStroke", {
-            Color = "OutlineColor",
-            Parent = Avatar,
-        })
-
         local ServerName = Info.Title or Info.Server or Name
         local AvatarIcon = if Info.Image then Library:GetCustomIcon(Info.Image) else nil
 
+        --// An image stands on its own; only the initials fallback needs a tile behind it
+        local Avatar = New("Frame", {
+            BackgroundColor3 = "MainColor",
+            BackgroundTransparency = if AvatarIcon then 1 else 0,
+            Size = UDim2.fromOffset(44, 44),
+            Parent = Header,
+        })
+
+        if not AvatarIcon then
+            Corner(Avatar, 14)
+            New("UIStroke", {
+                Color = "OutlineColor",
+                Parent = Avatar,
+            })
+        end
+
         if AvatarIcon then
-            local Image = Library:CreateIcon(AvatarIcon, {
+            Library:CreateIcon(AvatarIcon, {
                 Size = UDim2.fromScale(1, 1),
                 Parent = Avatar,
             })
-            Corner(Image, 14)
         else
             --// No image given, so fall back to the initials of the server name
             local Initials = ""
