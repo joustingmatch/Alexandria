@@ -292,7 +292,7 @@ local Library = {
     Discord = {
         Enabled = true,
         Name = "Discord",
-        Icon = "129540701419485",
+        Icon = "message-circle",
         Description = "Our server",
 
         Title = "Alexandria",
@@ -16710,7 +16710,20 @@ function Library:CreateWindow(WindowInfo)
         })
 
         local ServerName = Info.Title or Info.Server or Name
-        local AvatarIcon = if Info.Image then Library:GetCustomIcon(Info.Image) else nil
+
+        --// A file on disk goes through getcustomasset; anything else (asset id, lucide
+        --// name, url) takes the library's usual icon path
+        local AvatarIcon
+        if typeof(Info.Image) == "string" and Info.Image ~= "" then
+            if getcustomasset and Info.Image:match("%.%a+$") and not Info.Image:match("^%a+://") then
+                local Success, Asset = pcall(getcustomasset, Info.Image)
+                if Success and typeof(Asset) == "string" then
+                    AvatarIcon = { Url = Asset, ImageRectOffset = Vector2.zero, ImageRectSize = Vector2.zero, Custom = true }
+                end
+            end
+
+            AvatarIcon = AvatarIcon or Library:GetCustomIcon(Info.Image)
+        end
 
         --// An image stands on its own; only the initials fallback needs a tile behind it
         local Avatar = New("Frame", {
