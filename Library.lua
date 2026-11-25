@@ -292,10 +292,11 @@ local Library = {
     Discord = {
         Enabled = true,
         Name = "Discord",
-        Icon = "message-circle",
+        Icon = "129540701419485",
         Description = "Our server",
 
         Title = "Alexandria",
+        Image = "129540701419485",
         Invite = "https://discord.gg/synapsex",
         Text = "Updates, support and new releases all land in the server first.",
         Links = {
@@ -12213,6 +12214,7 @@ function Library:CreateWindow(WindowInfo)
     local SidebarPanel
     local ProfileCard
     local ProfileHeight = 52
+    local PinnedSlot --// fixed sidebar row just above the profile card, home of the built-in Discord tab
     local FolderButton
     local TabPicker
     local TabPickerLabel
@@ -12573,6 +12575,17 @@ function Library:CreateWindow(WindowInfo)
             BorderSizePixel = 0,
             Position = UDim2.fromScale(1, 0),
             Size = UDim2.new(0, 1, 1, 0),
+            Parent = SidebarPanel,
+        })
+
+        --// Pinned row above the profile card; the built-in Discord tab lives here so it
+        --// never scrolls away with the rest of the sidebar
+        PinnedSlot = New("Frame", {
+            AnchorPoint = Vector2.new(0, 1),
+            BackgroundTransparency = 1,
+            Position = UDim2.new(0, WindowPadding, 1, -WindowPadding),
+            Size = UDim2.new(0, SearchWidth, 0, TabBarHeight),
+            Visible = false,
             Parent = SidebarPanel,
         })
 
@@ -13755,7 +13768,7 @@ function Library:CreateWindow(WindowInfo)
     end
 
     --// Window Table \\--
-    local Window = {}
+    local Window = { Discord = (nil :: any) } --// Discord: the built-in tab, filled in at the end
     local Fading = false
 
     local function SetUICorner(UICorner, Corner, HalfValue)
@@ -14081,6 +14094,18 @@ function Library:CreateWindow(WindowInfo)
             Tabs.Position = UDim2.fromOffset(WindowPadding, SideTop)
             local ShowProfile = ProfileCard.Visible
             local ProfileSpace = if ShowProfile then ProfileHeight + WindowPadding + 8 else FooterHeight
+
+            --// The pinned row sits between the tab list and the profile card
+            local PinnedButton = Window.Discord and Window.Discord.Button
+            PinnedSlot.Visible = PinnedButton ~= nil and PinnedButton.Visible
+            if PinnedButton then
+                PinnedButton.Parent = PinnedSlot
+            end
+            if PinnedSlot.Visible then
+                PinnedSlot.Position = UDim2.new(0, WindowPadding, 1, -ProfileSpace)
+                ProfileSpace += TabBarHeight + 6
+            end
+
             Tabs.Size = UDim2.new(0, SearchWidth, 1, -SideTop - ProfileSpace)
             TabsListLayout.FillDirection = Enum.FillDirection.Vertical
             TabsListLayout.VerticalAlignment = Enum.VerticalAlignment.Top
@@ -14090,6 +14115,12 @@ function Library:CreateWindow(WindowInfo)
             Container.Position = UDim2.fromOffset(Left, ContentTop)
             Container.Size = UDim2.new(1, -Left - WindowPadding, 1, -ContentTop - FooterHeight)
         else
+            local PinnedButton = Window.Discord and Window.Discord.Button
+            if PinnedButton then
+                PinnedButton.Parent = Tabs
+            end
+            PinnedSlot.Visible = false
+
             Tabs.AutomaticCanvasSize = Enum.AutomaticSize.X
             Tabs.ScrollingDirection = Enum.ScrollingDirection.X
             TabsListLayout.FillDirection = Enum.FillDirection.Horizontal
@@ -16767,7 +16798,7 @@ function Library:CreateWindow(WindowInfo)
             Parent = Stats,
         })
 
-        local function Pill(PillOrder, DotColor)
+        local function Pill(PillOrder)
             local Holder = New("Frame", {
                 AutomaticSize = Enum.AutomaticSize.X,
                 BackgroundColor3 = "MainColor",
@@ -16792,13 +16823,6 @@ function Library:CreateWindow(WindowInfo)
                 Parent = Holder,
             })
 
-            local Dot = New("Frame", {
-                BackgroundColor3 = DotColor,
-                Size = UDim2.fromOffset(6, 6),
-                Parent = Holder,
-            })
-            Corner(Dot, 3)
-
             local DotLabel = New("TextLabel", {
                 AutomaticSize = Enum.AutomaticSize.X,
                 BackgroundTransparency = 1,
@@ -16810,27 +16834,11 @@ function Library:CreateWindow(WindowInfo)
                 Parent = Holder,
             })
 
-            return Holder, DotLabel, Dot
+            return Holder, DotLabel
         end
 
-        local OnlinePill, OnlineLabel, OnlineDot = Pill(0, Color3.fromRGB(70, 190, 125))
-        local MembersPill, MembersLabel = Pill(1, "OutlineColor")
-
-        --// A slow breathe on the online dot, so the card feels alive without blinking at you \\--
-        local Pulse = New("UIScale", { Parent = OnlineDot })
-        task.spawn(function()
-            while OnlineDot.Parent do
-                TweenService:Create(Pulse, TweenInfo.new(1.1, Enum.EasingStyle.Sine), { Scale = 1.4 }):Play()
-                task.wait(1.2)
-
-                if not OnlineDot.Parent then
-                    break
-                end
-
-                TweenService:Create(Pulse, TweenInfo.new(1.1, Enum.EasingStyle.Sine), { Scale = 1 }):Play()
-                task.wait(1.5)
-            end
-        end)
+        local OnlinePill, OnlineLabel = Pill(0)
+        local MembersPill, MembersLabel = Pill(1)
 
         New("Frame", {
             BackgroundColor3 = "OutlineColor",
@@ -17170,6 +17178,10 @@ function Library:CreateWindow(WindowInfo)
 
             if not Visible and Library.ActiveTab == Tab then
                 Tab:Hide()
+            end
+
+            if Window.Discord == Tab then
+                Window:SetTabLayout(Window:GetTabLayout())
             end
         end
 
@@ -18592,6 +18604,9 @@ function Library:CreateWindow(WindowInfo)
             Info.AutoShow = false
 
             Window.Discord = Window:AddDiscordTab(Info)
+
+            --// Re-run the layout so the pinned row picks the tab button up
+            Window:SetTabLayout(Window:GetTabLayout())
         end
     end
 
