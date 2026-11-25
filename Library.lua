@@ -1013,17 +1013,41 @@ local function GetTeams()
     return TeamList
 end
 
+local SpoilerWriting = false
+
 --// Registers a label whose text should be dotted out while spoiler mode is on.
+--// Anything that writes Label.Text directly is picked up too, so the real name never slips through.
 function Library:AddSpoilerLabel(Label: any)
     Library.SpoilerLabels[Label] = Label.Text
-    Library:RefreshSpoilers()
+    Library:ApplySpoiler(Label)
+
+    Library:GiveSignal(Label:GetPropertyChangedSignal("Text"):Connect(function()
+        if SpoilerWriting then
+            return
+        end
+
+        Library.SpoilerLabels[Label] = Label.Text
+        Library:ApplySpoiler(Label)
+    end))
+
     return Label
 end
 
 --// Updates the real (unmasked) text of a registered label
 function Library:SetSpoilerText(Label: any, Text: string)
     Library.SpoilerLabels[Label] = Text
-    Label.Text = if Library.Spoiler then Library:MaskText(Text) else Text
+    Library:ApplySpoiler(Label)
+end
+
+function Library:ApplySpoiler(Label: any)
+    local Real = Library.SpoilerLabels[Label]
+    if Real == nil then
+        return
+    end
+
+    SpoilerWriting = true
+    Label.Text = if Library.Spoiler then Library:MaskText(Real) else Real
+    SpoilerWriting = false
 end
 
 function Library:MaskText(Text: string): string
@@ -1038,7 +1062,7 @@ function Library:RefreshSpoilers()
             continue
         end
 
-        Label.Text = if Library.Spoiler then Library:MaskText(Real) else Real
+        Library:ApplySpoiler(Label)
     end
 end
 
@@ -12562,7 +12586,7 @@ function Library:CreateWindow(WindowInfo)
             BackgroundTransparency = 1,
             FontFace = "FontBold",
             Position = UDim2.new(0, 52, 0.5, -15),
-            Size = UDim2.new(1, -96, 0, 15),
+            Size = UDim2.new(1, -82, 0, 15),
             Text = LocalPlayer.DisplayName,
             TextSize = 13,
             TextTruncate = Enum.TextTruncate.AtEnd,
@@ -12573,7 +12597,7 @@ function Library:CreateWindow(WindowInfo)
             BackgroundTransparency = 1,
             FontFace = "FontMedium",
             Position = UDim2.new(0, 52, 0.5, 1),
-            Size = UDim2.new(1, -60, 0, 14),
+            Size = UDim2.new(1, -82, 0, 14),
             Text = "",
             TextColor3 = "MutedFontColor",
             TextSize = 11,
@@ -12585,39 +12609,53 @@ function Library:CreateWindow(WindowInfo)
         Library.ProfileGame = ProfileGame
         Library:AddSpoilerLabel(ProfileName)
 
-        --// Spoiler button: dots out your name. Baked in and enabled by default.
-        local SpoilerButton = New("TextButton", {
+        --// Spoiler toggle: a quiet eye in the corner of the card. Fades in when you hover the card.
+        local SpoilerButton = Library:CreateIcon(Library:GetIcon("eye"), {
             AnchorPoint = Vector2.new(1, 0.5),
-            AutoButtonColor = false,
-            BackgroundColor3 = "BackgroundColor",
-            BackgroundTransparency = 0.35,
-            FontFace = "FontBold",
-            Position = UDim2.new(1, -8, 0.5, 0),
-            Size = UDim2.fromOffset(36, 20),
-            Text = if Library.Spoiler then "SHOW" else "HIDE",
-            TextColor3 = "MutedFontColor",
-            TextSize = 10,
+            ImageColor3 = "MutedFontColor",
+            ImageTransparency = 1,
+            Position = UDim2.new(1, -10, 0.5, 0),
+            Size = UDim2.fromOffset(15, 15),
             Parent = ProfileCard,
-        })
-        New("UICorner", {
-            CornerRadius = UDim.new(1, 0),
-            Parent = SpoilerButton,
-        })
+        }, true) :: ImageButton
+
+        local SpoilerHovered = false
+        local CardHovered = false
+
+        local function SpoilerAlpha(): number
+            if SpoilerHovered then
+                return 0
+            elseif CardHovered then
+                return 0.35
+            end
+            return 1
+        end
 
         local function RefreshSpoilerButton()
-            SpoilerButton.Text = if Library.Spoiler then "SHOW" else "HIDE"
+            Library:ApplyIcon(SpoilerButton, Library:GetIcon(if Library.Spoiler then "eye" else "eye-off"))
+            TweenService:Create(SpoilerButton, Library.TweenInfo, { ImageTransparency = SpoilerAlpha() }):Play()
         end
 
         SpoilerButton.MouseButton1Click:Connect(function()
             Library:ToggleSpoiler()
-            RefreshSpoilerButton()
         end)
         SpoilerButton.MouseEnter:Connect(function()
-            SpoilerButton.BackgroundTransparency = 0.1
+            SpoilerHovered = true
+            RefreshSpoilerButton()
         end)
         SpoilerButton.MouseLeave:Connect(function()
-            SpoilerButton.BackgroundTransparency = 0.35
+            SpoilerHovered = false
+            RefreshSpoilerButton()
         end)
+        ProfileCard.MouseEnter:Connect(function()
+            CardHovered = true
+            RefreshSpoilerButton()
+        end)
+        ProfileCard.MouseLeave:Connect(function()
+            CardHovered = false
+            RefreshSpoilerButton()
+        end)
+        RefreshSpoilerButton()
 
         Library.SpoilerButton = SpoilerButton
         Library.RefreshSpoilerButton = RefreshSpoilerButton
