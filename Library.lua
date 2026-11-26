@@ -1490,7 +1490,7 @@ local function ApplySearchToTab(Tab, Search)
 end
 
 local function ResetTab(Tab)
-    if not Tab then
+    if not Tab or typeof(Tab.Groupboxes) ~= "table" or typeof(Tab.Tabboxes) ~= "table" then
         return
     end
 
@@ -1544,7 +1544,15 @@ function Library:UpdateSearch(SearchText)
 
     local TabsToSearch = {}
     for _, Tab in Library.Tabs do
-        if typeof(Tab) == "table" and not Tab.IsKeyTab and not Tab.IsCustomTab then
+        --// Only searchable tabs: built-ins like the key or Discord tab carry no groupboxes
+        if
+            typeof(Tab) == "table"
+            and not Tab.IsKeyTab
+            and not Tab.IsCustomTab
+            and not Tab.IsDiscordTab
+            and typeof(Tab.Groupboxes) == "table"
+            and typeof(Tab.Tabboxes) == "table"
+        then
             table.insert(TabsToSearch, Tab)
         end
     end
