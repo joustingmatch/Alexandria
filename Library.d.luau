@@ -246,6 +246,7 @@ export type SliderInfo = {
     DisabledTooltip: string?,
     Callback: ((number) -> ())?,
     Changed: ((number) -> ())?,
+    Released: ((number) -> ())?,
     Disabled: boolean?,
     Visible: boolean?,
     AllowRightClickInput: boolean?,
@@ -653,6 +654,8 @@ export type Slider = {
     TooltipTable: Tooltip?,
     Callback: (Value: number) -> (),
     Changed: (Value: number) -> (),
+    Released: ((Value: number) -> ())?,
+    Dragging: boolean,
     Disabled: boolean,
     Visible: boolean,
     AllowRightClickInput: boolean,
@@ -663,6 +666,8 @@ export type Slider = {
     Display: (self: Slider) -> (),
     OnChanged: (self: Slider, Func: (Value: number) -> ()) -> (),
     RunChanged: (self: Slider) -> (),
+    OnReleased: (self: Slider, Func: (Value: number) -> ()) -> Slider,
+    RunReleased: (self: Slider) -> (),
     SetMax: (self: Slider, Value: number) -> (),
     SetMin: (self: Slider, Value: number) -> (),
     SetValue: (self: Slider, Value: number | string) -> (),
@@ -1130,55 +1135,6 @@ export type Tab = {
     Destroy: (self: Tab) -> (),
 }
 
-export type KeyBoxInfo = {
-    Title: string?,
-    Subtitle: string?,
-    Text: string?,
-    Placeholder: string?,
-    ButtonText: string?,
-    Footer: string?,
-    ExpectedKey: (string | { string })?,
-    Validate: ((Key: string) -> (boolean, string?))?,
-    Callback: ((Success: boolean, Key: string) -> ())?,
-    GetKey: (string | () -> ())?,
-    GetKeyText: string?,
-    Premium: (string | () -> ())?,
-    PremiumText: string?,
-    SaveKey: string?,
-}
-
-export type KeyBox = {
-    Box: TextBox,
-    Card: Frame,
-    SetStatus: (self: KeyBox, Text: string?, Success: boolean?) -> (),
-    Submit: (self: KeyBox) -> (),
-}
-
-export type KeyTab = BaseGroupbox & {
-    Description: string?,
-    IsKeyTab: true,
-    Tooltip: string?,
-    TooltipTable: Tooltip?,
-    Elements: { [any]: any },
-    Window: Window,
-    Button: TextButton,
-    Container: ScrollingFrame,
-
-    AddKeyBox: ((self: KeyTab, Info: KeyBoxInfo) -> KeyBox)
-        & ((self: KeyTab, ExpectedKey: string | { string }, Callback: (Success: boolean, Key: string) -> ()) -> KeyBox)
-        & ((self: KeyTab, Callback: (Key: string) -> ()) -> KeyBox),
-    RefreshSides: (self: KeyTab) -> (),
-    Resize: (self: KeyTab) -> (),
-    UpdateCorners: (self: KeyTab) -> (),
-    Hover: (self: KeyTab, Hovering: boolean) -> (),
-    Show: (self: KeyTab) -> (),
-    Hide: (self: KeyTab) -> (),
-    SetVisible: (self: KeyTab, Visible: boolean) -> (),
-    SetOrder: (self: KeyTab, Order: number) -> (),
-    SetTooltip: (self: KeyTab, Text: string?) -> (),
-    Destroy: (self: KeyTab) -> (),
-}
-
 export type DiscordLink = {
     Text: string?,
     Url: string?,
@@ -1472,13 +1428,6 @@ export type Window = {
         Description: string?,
         Order: number?
     ) -> Tab,
-    AddKeyTab: (
-        self: Window,
-        Info: TabInfo | string,
-        Icon: string?,
-        Description: string?,
-        Order: number?
-    ) -> KeyTab,
     AddDiscordTab: ((self: Window, Info: DiscordTabInfo) -> DiscordTab)
         & ((self: Window, Name: string, Invite: string?) -> DiscordTab),
     AddCustomTab: (
@@ -1540,11 +1489,11 @@ export type Library = {
     Searching: boolean,
     GlobalSearch: boolean,
     LastSearchTab: Tab?,
-    ActiveTab: (Tab | KeyTab | CustomTab)?,
-    PreviousTab: (Tab | KeyTab | CustomTab)?,
+    ActiveTab: (Tab | CustomTab)?,
+    PreviousTab: (Tab | CustomTab)?,
     ActiveLoading: Loading?,
     ActiveDialog: Dialog?,
-    Tabs: { [string]: Tab | KeyTab | CustomTab },
+    Tabs: { [string]: Tab | CustomTab },
     TabButtons: { [number]: any },
     DependencyBoxes: { [number]: DependencyBox | DependencyGroupbox },
     KeybindFrame: Frame?,
@@ -1615,6 +1564,16 @@ export type Library = {
     UpdateColorsUsingRegistry: (self: Library) -> (),
     UpdateDPI: (self: Library, Instance: GuiObject, Properties: { [string]: any }) -> (),
     SetDPIScale: (self: Library, DPIScale: number) -> (),
+
+    --// Scaling
+    UserScale: number,
+    AdaptiveSize: boolean,
+    AdaptiveScale: number,
+    AdaptiveBaseSize: Vector2,
+    GetAdaptiveScale: (self: Library) -> number,
+    RefreshScale: (self: Library) -> (),
+    SetUserScale: (self: Library, Percent: number) -> (),
+    SetAdaptiveSize: (self: Library, Enabled: boolean?) -> (),
     GiveSignal: (self: Library, Connection: RBXScriptConnection | RBXScriptSignal) -> RBXScriptConnection,
     GetIcon: (self: Library, IconName: string) -> Icon?,
     GetCustomIcon: (self: Library, IconName: string) -> Icon?,
@@ -1629,9 +1588,15 @@ export type Library = {
     SetIconModule: (self: Library, module: IconModule) -> (),
     Validate: (self: Library, Table: { [string]: any }, Template: { [string]: any }) -> { [string]: any },
     Weather: string,
-    WeatherDim: number,
+    WeatherMode: string,
     SetWeather: (self: Library, Name: string?) -> (),
     GetWeatherTypes: (self: Library) -> { string },
+    SetWeatherMode: (self: Library, Mode: string?) -> (),
+    GetWeatherModes: (self: Library) -> { string },
+
+    BackgroundDim: boolean,
+    BackgroundDimAmount: number,
+    SetBackgroundDim: (self: Library, Enabled: boolean?, Amount: number?) -> (),
     GetBetterColor: (self: Library, Color: Color3, Add: number) -> Color3,
     GetLighterColor: (self: Library, Color: Color3) -> Color3,
     GetDarkerColor: (self: Library, Color: Color3) -> Color3,

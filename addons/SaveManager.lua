@@ -367,7 +367,8 @@ function SaveManager:IgnoreThemeSettings()
         "BackgroundColor", "MainColor", "AccentColor", "OutlineColor", "FontColor", "FontFace", "BackgroundImage",
         "SurfaceColor", "HoverColor", "InlineColor", "DarkAccentColor", "ToggleOffColor", "MutedFontColor",
         "ThemeManager_ThemeList", "ThemeManager_CustomThemeList", "ThemeManager_CustomThemeName", "ThemeManager_ThemeJSON",
-        "ThemeManager_Weather"
+        "ThemeManager_Weather", "ThemeManager_WeatherMode", "ThemeManager_UIScale", "ThemeManager_AdaptiveSize",
+        "ThemeManager_BackgroundDim", "ThemeManager_DimAmount"
     })
 end
 

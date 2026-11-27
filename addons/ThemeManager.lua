@@ -244,6 +244,13 @@ local function GetDefaultThemePath(): false | string
     return if CurrentThemesPath == false then false else string.format("%s/default.txt", CurrentThemesPath)
 end
 
+--// Interface settings (scale, adaptive fit, weather, dim) live beside the themes but
+--// are not a theme: they describe this device, not a palette
+local function GetInterfacePath(): false | string
+    local CurrentThemesPath = GetCurrentThemesPath()
+    return if CurrentThemesPath == false then false else string.format("%s/interface.json", CurrentThemesPath)
+end
+
 --// Folders \\--
 function ThemeManager:GetPaths(): {string}
     local FolderPath = GetFolderPath()
@@ -303,7 +310,7 @@ function ThemeManager:ReloadCustomThemes()
 
         local Position = RawFileName:gsub("\\", "/"):find("/[^/]*$")
         local FileName = Position and RawFileName:sub(Position + 1) or RawFileName
-        if not FileName or FileName == "default" then continue end
+        if not FileName or FileName == "default" or FileName == "interface" then continue end
 
         table.insert(FileNames, FileName)
     end
@@ -808,9 +815,104 @@ local function ShowDialog(
     })
 end
 
-function ThemeManager:CreateThemeManager(Themesbox: any)
+--// The manager is built in two sections: Interface (how the window looks and sizes
+--// itself on this screen) and Theming (colors and saved themes). Callers that pass a
+--// single groupbox still get everything in that one box.
+--// Interface settings \--
+local InterfaceIndexes = {
+    "ThemeManager_UIScale",
+    "ThemeManager_AdaptiveSize",
+    "ThemeManager_Weather",
+    "ThemeManager_WeatherMode",
+    "ThemeManager_BackgroundDim",
+    "ThemeManager_DimAmount",
+    "ShowToggleButton",
+    "ToggleButtonMode",
+}
+
+function ThemeManager:SaveInterface(): (boolean, string?)
+    local Library = ThemeManager.Library
+    if not Library then
+        return false, "Library is not set"
+    end
+
+    ThemeManager:CheckFolderTree()
+
+    local InterfacePath = GetInterfacePath()
+    if InterfacePath == false then
+        return false, "Invalid path provided"
+    end
+
+    local Data = {}
+    for _, Index in InterfaceIndexes do
+        local Option = Library.Options[Index] or Library.Toggles[Index]
+        if Option ~= nil and Option.Value ~= nil then
+            Data[Index] = Option.Value
+        end
+    end
+
+    local SuccessEncode, Encoded = pcall(HttpService.JSONEncode, HttpService, Data)
+    if not SuccessEncode then
+        return false, "Failed to encode interface settings"
+    end
+
+    local SuccessWrite, ErrorMessage = pcall(writefile, InterfacePath, Encoded)
+    if not SuccessWrite then
+        return false, ErrorMessage
+    end
+
+    return true
+end
+
+function ThemeManager:LoadInterface(): (boolean, string?)
+    local Library = ThemeManager.Library
+    if not Library then
+        return false, "Library is not set"
+    end
+
+    local InterfacePath = GetInterfacePath()
+    if InterfacePath == false or not isfile(InterfacePath) then
+        return false, "No interface settings saved"
+    end
+
+    local SuccessRead, Content = pcall(readfile, InterfacePath)
+    if not (SuccessRead and typeof(Content) == "string") then
+        return false, "Failed to read interface settings"
+    end
+
+    local SuccessDecode, Data = pcall(HttpService.JSONDecode, HttpService, Content)
+    if not (SuccessDecode and typeof(Data) == "table") then
+        return false, "Failed to decode interface settings"
+    end
+
+    for _, Index in InterfaceIndexes do
+        local Value = Data[Index]
+        if Value == nil then continue end
+
+        local Option = Library.Options[Index] or Library.Toggles[Index]
+        if Option and Option.SetValue then
+            Option:SetValue(Value)
+        end
+    end
+
+    return true
+end
+
+function ThemeManager:CreateThemeManager(Themesbox: any, Interfacebox: any?)
     assert(ThemeManager.Library, "Library is not set, call ThemeManager:SetLibrary(Library) first.")
     local Library = ThemeManager.Library
+    local Interface = Interfacebox or Themesbox
+
+    --// Written whenever one of the interface controls changes, so the window comes
+    --// back the same way on this device next time
+    local InterfaceReady = false
+    local function SaveInterface()
+        if not InterfaceReady then
+            return
+        end
+
+        ThemeManager:SaveInterface()
+    end
 
     local BuiltInThemesNames = {}
     for Name, _ThemeData in ThemeManager.BuiltInThemes do
@@ -868,7 +970,7 @@ function ThemeManager:CreateThemeManager(Themesbox: any)
 
     --// Window status: live size & position with a copy button
     local MainFrame = Library.Window and Library.Window.MainFrame
-    local StatusLabel = Themesbox:AddLabel("Size: - | Pos: -", true)
+    local StatusLabel = Interface:AddLabel("Size: - | Pos: -", true)
 
     local function GetStatusText(): string
         if not (MainFrame and MainFrame.Parent) then
@@ -895,7 +997,7 @@ function ThemeManager:CreateThemeManager(Themesbox: any)
     end
     UpdateStatus()
 
-    Themesbox:AddButton("Copy size & position", function()
+    Interface:AddButton("Copy size & position", function()
         if not setclipboard then
             Library:Notify("Your executor does not support setclipboard")
             return
@@ -917,18 +1019,86 @@ function ThemeManager:CreateThemeManager(Themesbox: any)
         Library:SetToggleButtonVisible(Enabled == true and (Mode == "Both Mobile & PC" or Library.IsMobile or IsMac))
     end
 
-    Themesbox:AddCheckbox("ShowToggleButton", {
+    Interface:AddCheckbox("ShowToggleButton", {
         Text = "Toggle Button",
         Default = true,
         Callback = RefreshToggleButton,
     })
-    Themesbox:AddDropdown("ToggleButtonMode", {
+    Interface:AddDropdown("ToggleButtonMode", {
         Text = "Toggle Button Mode",
         Values = { "For Mobile & Mac Only", "Both Mobile & PC" },
         Default = "For Mobile & Mac Only",
         Callback = RefreshToggleButton,
     })
     RefreshToggleButton()
+
+    Interface:AddDivider()
+
+    --// Sizing: the slider is the user's own scale, Adaptive Size fits that scale to
+    --// whatever screen the window is on (phone, tablet, laptop, 4K monitor)
+    local ScaleSlider, AdaptiveToggle
+
+    local function RefreshScaleLabel()
+        if not (ScaleSlider and AdaptiveToggle) then
+            return
+        end
+
+        local Suffix = if AdaptiveToggle.Value
+            then string.format("%% (screen: %d%%)", math.round(Library.AdaptiveScale * 100))
+            else "%"
+
+        ScaleSlider:SetSuffix(Suffix)
+    end
+
+    local function ApplyScale(Value: number)
+        Library:SetUserScale(Value)
+        RefreshScaleLabel()
+        SaveInterface()
+    end
+
+    ScaleSlider = Interface:AddSlider("ThemeManager_UIScale", {
+        Text = "UI Scale",
+        Default = math.round((Library.UserScale or 1) * 100),
+        Min = 50,
+        Max = 200,
+        Rounding = 0,
+        Suffix = "%",
+
+        --// Rescaling mid-drag moves the track out from under the cursor, which fights
+        --// the drag and makes the window jump, so the scale lands when the track is let go
+        Callback = function(Value)
+            if ScaleSlider and ScaleSlider.Dragging then
+                return
+            end
+
+            ApplyScale(Value)
+        end,
+
+        Released = function(Value)
+            ApplyScale(Value)
+        end,
+    })
+
+    AdaptiveToggle = Interface:AddCheckbox("ThemeManager_AdaptiveSize", {
+        Text = "Adaptive Size",
+        Tooltip = "Fits the window to the screen it is on, on top of your UI Scale.",
+        Default = true,
+        Callback = function(Value)
+            Library:SetAdaptiveSize(Value)
+            RefreshScaleLabel()
+            SaveInterface()
+        end,
+    })
+
+    --// The adaptive factor changes on its own when the screen does
+    local Camera = workspace.CurrentCamera
+    if Camera then
+        Library:GiveSignal(Camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+            task.defer(RefreshScaleLabel)
+        end))
+    end
+
+    Interface:AddDivider()
 
     CreateColorOption("Accent", "AccentColor")
     CreateColorOption("Backgrounds", "BackgroundColor")
@@ -942,13 +1112,57 @@ function ThemeManager:CreateThemeManager(Themesbox: any)
     CreateColorOption("Text Color", "FontColor")
     CreateColorOption("Deselected Text", "MutedFontColor")
 
-    Themesbox:AddDropdown("ThemeManager_Weather", {
+    --// Weather falls across the whole screen behind the window, not just inside it
+    Interface:AddDropdown("ThemeManager_Weather", {
         Text = "Weather",
         Values = Library:GetWeatherTypes(),
         Default = Library.Weather or "None",
         AllowNull = false,
         Callback = function(Value)
             Library:SetWeather(Value)
+            SaveInterface()
+        end,
+    })
+
+    Interface:AddDropdown("ThemeManager_WeatherMode", {
+        Text = "Weather Mode",
+        Tooltip = "Whether the weather falls across the whole screen or inside the window.",
+        Values = Library:GetWeatherModes(),
+        Default = Library.WeatherMode or "Screen",
+        AllowNull = false,
+        Callback = function(Value)
+            Library:SetWeatherMode(Value)
+            SaveInterface()
+        end,
+    })
+
+    --// Background dim: darkens everything behind the window while it is open
+    local DimSlider
+
+    Interface:AddCheckbox("ThemeManager_BackgroundDim", {
+        Text = "Background Dim",
+        Tooltip = "Dims the screen behind the window while it is open.",
+        Default = true,
+        Callback = function(Value)
+            Library:SetBackgroundDim(Value, DimSlider and DimSlider.Value / 100 or nil)
+            SaveInterface()
+        end,
+    })
+
+    DimSlider = Interface:AddSlider("ThemeManager_DimAmount", {
+        Text = "Dim Amount",
+        Default = math.round((1 - (Library.BackgroundDimAmount or 0.5)) * 100),
+        Min = 0,
+        Max = 100,
+        Rounding = 0,
+        Suffix = "%",
+        Callback = function(Value)
+            --// The slider reads as strength, the library wants transparency
+            Library:SetBackgroundDim(
+                Library.Toggles.ThemeManager_BackgroundDim and Library.Toggles.ThemeManager_BackgroundDim.Value,
+                1 - Value / 100
+            )
+            SaveInterface()
         end,
     })
 
@@ -1108,8 +1322,19 @@ function ThemeManager:CreateThemeManager(Themesbox: any)
         ColorOption:OnChanged(UpdateTheme)
     end
 
-    --// Load default
+    --// Load defaults: the theme, then this device's interface settings
     ThemeManager:LoadDefault()
+    ThemeManager:LoadInterface()
+
+    --// Push the loaded (or default) values through to the library once, so the window
+    --// starts out sized and dimmed the way the controls say it is
+    Library:SetUserScale(ScaleSlider.Value)
+    Library:SetAdaptiveSize(AdaptiveToggle.Value)
+    Library:SetBackgroundDim(Library.Toggles.ThemeManager_BackgroundDim.Value, 1 - DimSlider.Value / 100)
+    Library:SetWeatherMode(Library.Options.ThemeManager_WeatherMode.Value)
+    Library:SetWeather(Library.Options.ThemeManager_Weather.Value)
+    RefreshScaleLabel()
+    InterfaceReady = true
     ThemeManager.AppliedToTab = true
 
     return Themesbox
@@ -1124,13 +1349,25 @@ function ThemeManager:CreateGroupBox(Tab: any, IconName: string)
     })
 end
 
-function ThemeManager:ApplyToTab(Tab: any, IconName: string)
-    local Groupbox = ThemeManager:CreateGroupBox(Tab, IconName)
-    return ThemeManager:CreateThemeManager(Groupbox)
+--// The window-and-screen half: sizing, the toggle button, weather and the dim
+function ThemeManager:CreateInterfaceGroupBox(Tab: any, IconName: string?)
+    return Tab:AddGroupbox({
+        Side = "Left",
+        Name = "Interface",
+        IconName = IconName or "monitor",
+        MaxHeight = 300,
+    })
 end
 
-function ThemeManager:ApplyToGroupbox(Groupbox: any)
-    return ThemeManager:CreateThemeManager(Groupbox)
+--// Two groupboxes: Interface on top, Theming under it
+function ThemeManager:ApplyToTab(Tab: any, IconName: string, InterfaceIconName: string?)
+    local Interfacebox = ThemeManager:CreateInterfaceGroupBox(Tab, InterfaceIconName)
+    local Themesbox = ThemeManager:CreateGroupBox(Tab, IconName)
+    return ThemeManager:CreateThemeManager(Themesbox, Interfacebox)
+end
+
+function ThemeManager:ApplyToGroupbox(Groupbox: any, Interfacebox: any?)
+    return ThemeManager:CreateThemeManager(Groupbox, Interfacebox)
 end
 
 getgenv().ObsidianThemeManager = ThemeManager

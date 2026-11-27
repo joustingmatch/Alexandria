@@ -168,6 +168,14 @@ local Library = {
     SpoilerLabels = {},
     SpoilerButton = nil :: any,
     RefreshSpoilerButton = nil :: (() -> ())?,
+
+    --// Avatar privacy: blanks every avatar image the library shows. Off by default.
+    HideAvatar = false,
+    AvatarImages = {},
+
+    --// Session: when this load happened, and how many loads this executor has seen
+    LoadedAt = os.clock(),
+    ExecCount = 1,
     QuickConfigProvider = nil :: any, --// set by Window:SetQuickConfig (SaveManager does it for you)
     IsRobloxFocused = true,
 
@@ -226,6 +234,7 @@ local Library = {
     --// Animations \\--
     TweenInfo = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
     HoverTweenInfo = TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+    TabSelectTweenInfo = TweenInfo.new(0.28, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
     PressTweenInfo = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
     GlideTweenInfo = TweenInfo.new(0.28, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
 
@@ -238,8 +247,18 @@ local Library = {
 
     --// Weather backdrop
     Weather = "None",
-    WeatherDim = 0.45, --// backdrop transparency while weather is on (lower = darker)
-    DropdownTransitionInfo = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+    WeatherMode = "Screen", --// "Screen" fills the display, "Window" keeps it inside the UI
+
+    --// Screen dim behind the window while it is open
+    BackgroundDim = true,
+    BackgroundDimAmount = 0.5, --// backdrop transparency while the dim is on (lower = darker)
+
+    --// Scaling: the slider's own value, and the automatic factor on top of it
+    UserScale = 1,
+    AdaptiveSize = false,
+    AdaptiveScale = 1,
+    AdaptiveBaseSize = Vector2.new(580, 640), --// the window size the adaptive fit is measured against
+    DropdownTransitionInfo = TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
     KeyPickerTransitionInfo = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 
     GroupboxTweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
@@ -249,7 +268,7 @@ local Library = {
         ToggleWindow = false,
         TabSwitch = false,
         Groupbox = false,
-        Dropdown = false,
+        Dropdown = true,
         KeyPicker = false
     },
 
@@ -280,6 +299,7 @@ local Library = {
     --// Signals \\--
     Signals = {},
     UnloadSignals = {},
+    AdaptiveConnection = nil,
 
     OriginalMinSize = Vector2.new(480, 360),
     MinSize = Vector2.new(480, 360),
@@ -466,7 +486,7 @@ local Templates = {
             ToggleWindow = true,
             TabSwitch = false,
             Groupbox = false,
-            Dropdown = false,
+            Dropdown = true,
             KeyPicker = false,
         },
 
@@ -1100,6 +1120,68 @@ function Library:ToggleSpoiler()
     Library:SetSpoiler(not Library.Spoiler)
 end
 
+--// Registers an avatar image so it can be blanked along with every other one.
+--// There is no image blur in Roblox, so a cover sits over the picture instead.
+function Library:AddAvatarImage(Image: any)
+    if typeof(Image) ~= "Instance" then
+        return Image
+    end
+
+    local Cover = Instance.new("Frame") :: Frame
+    Cover.Name = "AvatarCover"
+    Cover.BackgroundColor3 = GetSchemeValue("MainColor")
+    Cover.BorderSizePixel = 0
+    Cover.Size = UDim2.fromScale(1, 1)
+    Cover.Visible = Library.HideAvatar
+    Cover.ZIndex = (Image :: any).ZIndex + 1
+    Cover.Parent = Image
+
+    local ImageCorner = Image:FindFirstChildOfClass("UICorner")
+    local CoverCorner = Instance.new("UICorner")
+    CoverCorner.CornerRadius = if ImageCorner then ImageCorner.CornerRadius else UDim.new(0, Library.CornerRadius)
+    CoverCorner.Parent = Cover
+
+    local Glyph = Library:CreateIcon(Library:GetIcon("user"), {
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundTransparency = 1,
+        ImageColor3 = "MutedFontColor",
+        ImageTransparency = 0.35,
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromScale(0.4, 0.4),
+        SizeConstraint = Enum.SizeConstraint.RelativeYY,
+        ZIndex = Cover.ZIndex + 1,
+        Parent = Cover,
+    })
+    if Glyph then
+        Glyph.Name = "AvatarCoverGlyph"
+    end
+
+    Library.AvatarImages[Image] = Cover
+
+    return Image
+end
+
+function Library:SetAvatarHidden(Hidden: boolean?)
+    Library.HideAvatar = Hidden == true
+
+    for Image, Cover in Library.AvatarImages do
+        if typeof(Image) ~= "Instance" or not Image.Parent then
+            Library.AvatarImages[Image] = nil
+            continue
+        end
+
+        if typeof(Cover) == "Instance" and Cover.Parent then
+            local Frame = Cover :: Frame
+            Frame.BackgroundColor3 = GetSchemeValue("MainColor")
+            Frame.Visible = Library.HideAvatar
+        end
+    end
+end
+
+function Library:ToggleAvatarHidden()
+    Library:SetAvatarHidden(not Library.HideAvatar)
+end
+
 function Library:UpdateDependencyBoxes()
     for _, Depbox in Library.DependencyBoxes do
         Depbox:Update(true)
@@ -1544,10 +1626,9 @@ function Library:UpdateSearch(SearchText)
 
     local TabsToSearch = {}
     for _, Tab in Library.Tabs do
-        --// Only searchable tabs: built-ins like the key or Discord tab carry no groupboxes
+        --// Only searchable tabs: built-ins like the Discord tab carry no groupboxes
         if
             typeof(Tab) == "table"
-            and not Tab.IsKeyTab
             and not Tab.IsCustomTab
             and not Tab.IsDiscordTab
             and typeof(Tab.Groupboxes) == "table"
@@ -1563,11 +1644,6 @@ function Library:UpdateSearch(SearchText)
 
     local Search = NormalizeSearch(LowerText(SearchText))
     if Trim(Search) == "" then
-        Library.Searching = false
-        Library.LastSearchTab = nil
-        return
-    end
-    if not Library.GlobalSearch and Library.ActiveTab and Library.ActiveTab.IsKeyTab then
         Library.Searching = false
         Library.LastSearchTab = nil
         return
@@ -1667,6 +1743,56 @@ function Library:SetDPIScale(DPIScale: number)
     for _, Notification in Library.Notifications do
         Notification:Resize()
     end
+end
+
+--// Adaptive size: one factor that fits the window to whatever screen it is on.
+--// It is measured against AdaptiveBaseSize, so a display that cannot fit the window
+--// at 1:1 scales down and a display with room to spare scales up with its density.
+function Library:GetAdaptiveScale(): number
+    local Camera = workspace.CurrentCamera
+    local Viewport = if Camera and Camera.ViewportSize.X > 5 then Camera.ViewportSize else Vector2.new(1920, 1080)
+    local Base = Library.AdaptiveBaseSize
+
+    --// Leave a tenth of the screen as breathing room around the window
+    local Fit = math.min(Viewport.X * 0.9 / Base.X, Viewport.Y * 0.9 / Base.Y)
+
+    --// On a bigger-than-1080p display the UI grows with the screen instead of
+    --// staying a small island in the middle of it
+    local Density = math.min(Viewport.X / 1920, Viewport.Y / 1080)
+
+    return math.clamp(math.min(Fit, math.max(Density, 1)), 0.5, 2)
+end
+
+--// Pushes UserScale and the adaptive factor to the library as one DPI value
+function Library:RefreshScale()
+    Library.AdaptiveScale = if Library.AdaptiveSize then Library:GetAdaptiveScale() else 1
+    Library:SetDPIScale(Library.UserScale * Library.AdaptiveScale * 100)
+end
+
+--// The scale the user picked; the adaptive factor still applies on top of it
+function Library:SetUserScale(Percent: number)
+    Library.UserScale = math.clamp(Percent, 25, 300) / 100
+    Library:RefreshScale()
+end
+
+function Library:SetAdaptiveSize(Enabled: boolean?)
+    Library.AdaptiveSize = Enabled == true
+
+    --// Follow the screen while it is on: rotating a phone or resizing a window re-fits
+    if Library.AdaptiveSize and not Library.AdaptiveConnection then
+        local Camera = workspace.CurrentCamera
+        if Camera then
+            Library.AdaptiveConnection = Library:GiveSignal(
+                Camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+                    if Library.AdaptiveSize then
+                        Library:RefreshScale()
+                    end
+                end)
+            )
+        end
+    end
+
+    Library:RefreshScale()
 end
 
 function Library:GiveSignal(Connection: RBXScriptConnection | RBXScriptSignal)
@@ -2197,11 +2323,37 @@ do
     })
     local ParticleLayer = New("CanvasGroup", {
         BackgroundTransparency = 1,
+        ClipsDescendants = true,
         GroupTransparency = 1,
         Size = UDim2.fromScale(1, 1),
         ZIndex = 0,
         Parent = Backdrop,
     })
+
+    --// Screen mode draws into the full-screen backdrop; Window mode moves the same
+    --// layer into the window so the weather falls inside the UI instead
+    local function ApplyWeatherMode()
+        local Window = Library.Window
+        local MainFrame = Window and Window.MainFrame
+        local InWindow = Library.WeatherMode == "Window" and MainFrame ~= nil
+
+        local Corner = ParticleLayer:FindFirstChildOfClass("UICorner")
+        if InWindow then
+            ParticleLayer.Parent = MainFrame
+            ParticleLayer.ZIndex = (MainFrame :: any).ZIndex + 50
+            if not Corner then
+                Corner = Instance.new("UICorner")
+                Corner.Parent = ParticleLayer
+            end
+            Corner.CornerRadius = UDim.new(0, Library.CornerRadius)
+        else
+            ParticleLayer.Parent = Backdrop
+            ParticleLayer.ZIndex = 0
+            if Corner then
+                Corner:Destroy()
+            end
+        end
+    end
 
     local Particles = {}
     local Elapsed = 0
@@ -2229,7 +2381,7 @@ do
             return
         end
 
-        local Bounds = Backdrop.AbsoluteSize
+        local Bounds = ParticleLayer.AbsoluteSize
         for _ = 1, Preset.Count do
             local Spec = Preset.Make()
             local Frame = Instance.new("Frame")
@@ -2256,7 +2408,7 @@ do
 
     local function Step(DeltaTime: number)
         Elapsed += DeltaTime
-        local Bounds = Backdrop.AbsoluteSize
+        local Bounds = ParticleLayer.AbsoluteSize
 
         for _, Particle in Particles do
             local Spec = Particle.Spec
@@ -2277,38 +2429,51 @@ do
         end
     end
 
+    --// The backdrop darkens the screen for the dim only. Weather never dims anything;
+    --// it just draws its particles over whatever is there.
+    local function GetBackdropTransparency(): number?
+        if not Shown or not Library.BackgroundDim then
+            return nil
+        end
+
+        return Library.BackgroundDimAmount
+    end
+
     local function Apply()
         local Active = Shown and Library.Weather ~= "None" and #Particles > 0
+        local Target = GetBackdropTransparency()
 
-        if Active then
+        if Active or Target then
             --// Stretch up under Roblox's top bar; the inset isn't known until the client is ready
             local Inset = GuiService:GetGuiInset().Y
             Backdrop.Position = UDim2.fromOffset(0, -Inset)
             Backdrop.Size = UDim2.new(1, 0, 1, Inset)
             Backdrop.Visible = true
-            if not StepConnection then
-                StepConnection = Library:GiveSignal(RunService.RenderStepped:Connect(Step))
-            end
+        end
+
+        if Active and not StepConnection then
+            StepConnection = Library:GiveSignal(RunService.RenderStepped:Connect(Step))
         end
 
         TweenService:Create(Backdrop, Library.WindowAnimationInfo, {
-            BackgroundTransparency = if Active then Library.WeatherDim else 1,
+            BackgroundTransparency = Target or 1,
         }):Play()
         TweenService:Create(ParticleLayer, Library.WindowAnimationInfo, {
             GroupTransparency = if Active then 0 else 1,
         }):Play()
 
-        if not Active then
+        if not Active and StepConnection then
+            StepConnection:Disconnect()
+            StepConnection = nil
+        end
+
+        if not (Target or Active) then
             task.delay(Library.WindowAnimationInfo.Time, function()
-                if Shown and Library.Weather ~= "None" then
+                if GetBackdropTransparency() or (Shown and Library.Weather ~= "None" and #Particles > 0) then
                     return
                 end
 
                 Backdrop.Visible = false
-                if StepConnection then
-                    StepConnection:Disconnect()
-                    StepConnection = nil
-                end
             end)
         end
     end
@@ -2332,6 +2497,33 @@ do
 
     function Library:GetWeatherTypes(): { string }
         return { "None", "Snow", "Sakura", "Rain" }
+    end
+
+    --// Where the weather falls: over the whole screen, or inside the window only
+    function Library:SetWeatherMode(Mode: string?)
+        Library.WeatherMode = if Mode == "Window" then "Window" else "Screen"
+        ApplyWeatherMode()
+
+        --// Bounds changed, so the particles are respawned to suit the new area
+        if Library.Weather ~= "None" then
+            BuildParticles(Library.Weather)
+        end
+
+        Apply()
+    end
+
+    function Library:GetWeatherModes(): { string }
+        return { "Screen", "Window" }
+    end
+
+    --// Dims the whole screen behind the window while it is open
+    function Library:SetBackgroundDim(Enabled: boolean?, Amount: number?)
+        if typeof(Amount) == "number" then
+            Library.BackgroundDimAmount = math.clamp(Amount, 0, 1)
+        end
+
+        Library.BackgroundDim = Enabled == true
+        Apply()
     end
 end
 
@@ -4186,6 +4378,10 @@ function Library:AddContextMenu(
                 OpenSize = UDim2.new(TargetSize.X.Scale, TargetSize.X.Offset, 0, FullHeight)
             end
 
+            --// Clipped while it unfurls, so the rows are revealed instead of spilling out
+            local WasClipping = Menu.ClipsDescendants
+            Menu.ClipsDescendants = true
+
             Menu.Size = UDim2.new(OpenSize.X.Scale, OpenSize.X.Offset, 0, 0)
             Menu.Visible = true
 
@@ -4201,6 +4397,7 @@ function Library:AddContextMenu(
                     StopTween(Table.OpenCloseTween, true)
                     Table.OpenCloseTween = nil
 
+                    Menu.ClipsDescendants = WasClipping
                     if Table.AutoSizeY then
                         Menu.AutomaticSize = Enum.AutomaticSize.Y
                     end
@@ -4273,6 +4470,9 @@ function Library:AddContextMenu(
                 Menu.AutomaticSize = Enum.AutomaticSize.None
             end
 
+            local WasClipping = Menu.ClipsDescendants
+            Menu.ClipsDescendants = true
+
             local CurrentSize = Menu.Size
             local CollapsedSize = UDim2.new(CurrentSize.X.Scale, CurrentSize.X.Offset, 0, 0)
 
@@ -4289,6 +4489,7 @@ function Library:AddContextMenu(
                     Table.OpenCloseTween = nil
 
                     Menu.Visible = false
+                    Menu.ClipsDescendants = WasClipping
                     if Table.AutoSizeY then
                         Menu.AutomaticSize = Enum.AutomaticSize.Y
                     end
@@ -7230,7 +7431,7 @@ do
             Text = Label.Text,
             TextSize = Data.Size,
             TextWrapped = Label.DoesWrap,
-            TextXAlignment = Groupbox.IsKeyTab and Enum.TextXAlignment.Center or Enum.TextXAlignment.Left,
+            TextXAlignment = Enum.TextXAlignment.Left,
             Visible = Label.Visible,
             Parent = Container,
         })
@@ -8488,6 +8689,11 @@ do
 
             Callback = Info.Callback,
             Changed = Info.Changed,
+            Released = Info.Released,
+
+            --// True only while the track is being dragged. A callback that resizes the
+            --// UI has to wait for the drag to end, or the track moves under the cursor
+            Dragging = false,
 
             Disabled = Info.Disabled,
             Visible = Info.Visible,
@@ -8774,6 +8980,20 @@ do
             Library:SafeCallback(Slider.Changed, Slider.Value)
         end
 
+        --// Fired once the track is let go, for work too heavy to do every frame
+        function Slider:RunReleased()
+            if Slider.Disabled then
+                return
+            end
+
+            Library:SafeCallback(Slider.Released, Slider.Value)
+        end
+
+        function Slider:OnReleased(Func)
+            Slider.Released = Func
+            return Slider
+        end
+
         function Slider:SetValue(Str)
             local Num = tonumber(Str)
             if not Num or Num == Slider.Value then
@@ -8962,6 +9182,8 @@ do
                 Library.ActiveLoading.Sidebar.Container.ScrollingEnabled = false
             end
 
+            Slider.Dragging = true
+
             while IsDragInput(Input) and not Slider.Destroyed do
                 local Location = Mouse.X
                 local Scale = math.clamp((Location - Track.AbsolutePosition.X) / Track.AbsoluteSize.X, 0, 1)
@@ -8976,6 +9198,9 @@ do
 
                 RunService.RenderStepped:Wait()
             end
+
+            Slider.Dragging = false
+            Slider:RunReleased()
 
             if Library.ActiveTab then
                 for _, Side in Library.ActiveTab.Sides do
@@ -12141,6 +12366,9 @@ function Library:CreateWindow(WindowInfo)
         math.clamp(WindowInfo.Size.X.Offset, Library.MinSize.X, MaxX),
         math.clamp(WindowInfo.Size.Y.Offset, Library.MinSize.Y, MaxY)
     )
+
+    --// What the adaptive fit measures itself against: this window at 1:1
+    Library.AdaptiveBaseSize = Vector2.new(WindowInfo.Size.X.Offset, WindowInfo.Size.Y.Offset)
     if typeof(WindowInfo.Font) == "EnumItem" then
         WindowInfo.Font = Font.fromEnum(WindowInfo.Font :: any)
     end
@@ -12623,6 +12851,7 @@ function Library:CreateWindow(WindowInfo)
             CornerRadius = UDim.new(1, 0),
             Parent = AvatarImage,
         })
+        Library:AddAvatarImage(AvatarImage)
         local ProfileName = New("TextLabel", {
             BackgroundTransparency = 1,
             FontFace = "FontBold",
@@ -12650,56 +12879,8 @@ function Library:CreateWindow(WindowInfo)
         Library.ProfileGame = ProfileGame
         Library:AddSpoilerLabel(ProfileName)
 
-        --// Spoiler toggle: a quiet eye in the corner of the card. Fades in when you hover the card.
-        local SpoilerButton = Library:CreateIcon(Library:GetIcon("eye"), {
-            AnchorPoint = Vector2.new(1, 0.5),
-            ImageColor3 = "MutedFontColor",
-            ImageTransparency = 1,
-            Position = UDim2.new(1, -10, 0.5, 0),
-            Size = UDim2.fromOffset(15, 15),
-            Parent = ProfileCard,
-        }, true) :: ImageButton
-
-        local SpoilerHovered = false
-        local CardHovered = false
-
-        local function SpoilerAlpha(): number
-            if SpoilerHovered then
-                return 0
-            elseif CardHovered then
-                return 0.35
-            end
-            return 1
-        end
-
-        local function RefreshSpoilerButton()
-            Library:ApplyIcon(SpoilerButton, Library:GetIcon(if Library.Spoiler then "eye" else "eye-off"))
-            TweenService:Create(SpoilerButton, Library.TweenInfo, { ImageTransparency = SpoilerAlpha() }):Play()
-        end
-
-        SpoilerButton.MouseButton1Click:Connect(function()
-            Library:ToggleSpoiler()
-        end)
-        SpoilerButton.MouseEnter:Connect(function()
-            SpoilerHovered = true
-            RefreshSpoilerButton()
-        end)
-        SpoilerButton.MouseLeave:Connect(function()
-            SpoilerHovered = false
-            RefreshSpoilerButton()
-        end)
-        ProfileCard.MouseEnter:Connect(function()
-            CardHovered = true
-            RefreshSpoilerButton()
-        end)
-        ProfileCard.MouseLeave:Connect(function()
-            CardHovered = false
-            RefreshSpoilerButton()
-        end)
-        RefreshSpoilerButton()
-
-        Library.SpoilerButton = SpoilerButton
-        Library.RefreshSpoilerButton = RefreshSpoilerButton
+        --// The name is hidden or shown from the Home tab's Name chip now, so the card
+        --// itself carries no control of its own
 
         task.spawn(function()
             local Ok, Image = pcall(function()
@@ -13990,10 +14171,6 @@ function Library:CreateWindow(WindowInfo)
         end
 
         for _, Tab in Library.Tabs do
-            if Tab.IsKeyTab then
-                continue
-            end
-
             for _, Tabbox in Tab.Tabboxes do
                 Tabbox:UpdateCorners()
             end
@@ -14259,13 +14436,14 @@ function Library:CreateWindow(WindowInfo)
             Parent = TabButton,
         })
 
-        --// Accent bar on the left of the active tab (side layout only)
+        --// Accent bar on the left of the active tab (side layout only); it grows out of the
+        --// middle while the tab is being selected, so the switch reads as one movement
         local TabBar = if Parent then nil else New("Frame", {
             BackgroundColor3 = "AccentColor",
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
             LayoutOrder = -1,
-            Size = UDim2.fromOffset(3, 18),
+            Size = UDim2.fromOffset(3, 0),
             Visible = false,
             Parent = TabButton,
         })
@@ -15743,29 +15921,45 @@ function Library:CreateWindow(WindowInfo)
             end
         end
 
+        local SelectionTweens = {}
+
         function Tab:SetSelected(Selected: boolean)
             Tab.Selected = Selected == true
+
+            --// One tween set per switch: the old one is cancelled so a fast click-through
+            --// picks up from where the last switch got to instead of snapping
+            for Index, Tween in SelectionTweens do
+                StopTween(Tween, true)
+                SelectionTweens[Index] = nil
+            end
+
+            local Info = Library.TabSelectTweenInfo or Library.TweenInfo
+            local function Tween(Object, Properties)
+                if not Object then
+                    return
+                end
+
+                local NewTween = TweenService:Create(Object, Info, Properties)
+                table.insert(SelectionTweens, NewTween)
+                NewTween:Play()
+            end
+
             --// The side column marks the active tab with an accent bar instead of a filled pill
-            local Pill = Selected and not (TabBar and WindowInfo.TabLayout == "Side")
-            TweenService:Create(TabButton, Library.TweenInfo, {
-                BackgroundTransparency = Pill and 0 or 1,
-            }):Play()
-            TweenService:Create(TabStroke, Library.TweenInfo, {
-                Transparency = Pill and 0 or 1,
-            }):Play()
+            local Side = TabBar and WindowInfo.TabLayout == "Side"
+            local Pill = Selected and not Side
+
+            Tween(TabButton, { BackgroundTransparency = Pill and 0 or 1 })
+            Tween(TabStroke, { Transparency = Pill and 0 or 1 })
+
             if TabBar then
-                TweenService:Create(TabBar, Library.TweenInfo, {
+                Tween(TabBar, {
                     BackgroundTransparency = Selected and 0 or 1,
-                }):Play()
+                    Size = UDim2.fromOffset(3, Selected and 18 or 0),
+                })
             end
-            TweenService:Create(TabLabel, Library.TweenInfo, {
-                TextTransparency = Selected and 0 or 0.5,
-            }):Play()
-            if TabIcon then
-                TweenService:Create(TabIcon, Library.TweenInfo, {
-                    ImageTransparency = Selected and 0 or 0.5,
-                }):Play()
-            end
+
+            Tween(TabLabel, { TextTransparency = Selected and 0 or 0.5 })
+            Tween(TabIcon, { ImageTransparency = Selected and 0 or 0.5 })
         end
 
         function Tab:Show()
@@ -15999,45 +16193,40 @@ function Library:CreateWindow(WindowInfo)
         return Tab
     end
 
-    function Window:AddKeyTab(...)
-        local Name = nil
-        local Icon = nil
-        local Description = nil
-        local Tooltip = nil
-        local Order = nil
+    --// A baked-in Home tab: who you are, how the session is running, the place you're
+    --// in and where to find us. Every window gets one, pinned above all tabs and categories.
+    function Window:AddHomeTab(...)
+        local Info
 
         if select("#", ...) == 1 and typeof(...) == "table" then
-            local Info = select(1, ...)
-            Name = Info.Name or "Tab"
-            Icon = Info.Icon
-            Description = Info.Description
-            Tooltip = Info.Tooltip
-            Order = Info.Order
+            Info = select(1, ...)
         else
-            Name = select(1, ...) or "Tab"
-            Icon = select(2, ...)
-            Description = select(3, ...)
-            Order = select(4, ...)
+            Info = { Name = select(1, ...) }
         end
+        Info = Info or {}
 
-        if not tonumber(Order) then
-            Order = #Tabs:GetChildren()
-        end
+        local Name = Info.Name or "Home"
+        local Description = Info.Description
+        local Tooltip = Info.Tooltip
+        local Icon = Info.Icon or "house"
 
-        Icon = Icon or "key"
+        --// Always above every tab and every category, whatever order they were added in
+        local Order = tonumber(Info.Order) or -1000
+
+        local MarketplaceService = cloneref(game:GetService("MarketplaceService"))
+        local TeleportService = cloneref(game:GetService("TeleportService"))
+        local HttpService = cloneref(game:GetService("HttpService"))
 
         local TabButton: TextButton
         local TabLabel
         local TabIcon
         local TabStroke
-
         local TabContainer
 
-        Icon = if Icon == "key" then KeyIcon else Library:GetCustomIcon(Icon)
+        Icon = Library:GetCustomIcon(Icon)
         do
             TabButton, TabLabel, TabIcon, TabStroke = CreateTabButton(Name, Icon, Order)
 
-            --// Tab Container \\--
             TabContainer = New("ScrollingFrame", {
                 AutomaticCanvasSize = Enum.AutomaticSize.Y,
                 BackgroundTransparency = 1,
@@ -16049,416 +16238,1113 @@ function Library:CreateWindow(WindowInfo)
                 Parent = Container,
             })
             New("UIListLayout", {
-                HorizontalAlignment = Enum.HorizontalAlignment.Center,
-                Padding = UDim.new(0, 8),
-                VerticalAlignment = Enum.VerticalAlignment.Center,
+                Padding = UDim.new(0, 10),
+                SortOrder = Enum.SortOrder.LayoutOrder,
                 Parent = TabContainer,
             })
             New("UIPadding", {
+                PaddingTop = UDim.new(0, 6),
                 PaddingLeft = UDim.new(0, 1),
                 PaddingRight = UDim.new(0, 1),
+                PaddingBottom = UDim.new(0, 6),
                 Parent = TabContainer,
             })
         end
 
-        --// Tab Table \\--
         local Tab = {
+            Name = Name,
             Description = Description,
-            IsKeyTab = true,
+            IsHomeTab = true,
 
             Tooltip = Tooltip,
             TooltipTable = nil,
 
-            Elements = {},
+            Connections = {},
+            Destroyed = false,
 
             Window = Window,
             Button = TabButton,
-            Container = TabContainer
+            Container = TabContainer,
+            Sides = {},
+
+            Elements = {},
+            Groupboxes = {},
+            Tabboxes = {},
+            DependencyGroupboxes = {},
         }
 
-        --// AddKeyBox(Callback) -> Callback(Key)
-        --// AddKeyBox(ExpectedKey, Callback) -> Callback(Success, Key)
-        --// AddKeyBox(Info) -> card with title, status, Get key / Premium buttons and optional saved key
-        function Tab:AddKeyBox(...)
-            local Info
-            if typeof(...) == "table" then
-                Info = select(1, ...)
-            elseif typeof(...) == "function" then
-                Info = { Callback = select(1, ...), Legacy = true }
-            else
-                Info = { ExpectedKey = select(1, ...), Callback = select(2, ...) }
-            end
-
-            assert(typeof(Info.Callback) == "function" or Info.ExpectedKey or Info.Validate, "AddKeyBox needs a Callback, ExpectedKey or Validate")
-
-            local Checking = false
-            local KeyBox = {}
-
-            local function Corner(Parent, Radius)
-                table.insert(
-                    Library.Corners,
-                    New("UICorner", {
-                        CornerRadius = UDim.new(0, Radius or Library.CornerRadius),
-                        Parent = Parent,
-                    })
-                )
-            end
-
-            local function Recolor(Instance, Property, Key)
-                Library.Registry[Instance][Property] = Key
-                TweenService:Create(Instance, Library.TweenInfo, {
-                    [Property] = Library.Scheme[Key],
-                }):Play()
-            end
-
-            --// Card \\--
-            local Card = New("Frame", {
-                AutomaticSize = Enum.AutomaticSize.Y,
-                BackgroundColor3 = "BackgroundColor",
-                Size = UDim2.new(1, -16, 0, 0),
-                Parent = TabContainer,
-            })
-            New("UISizeConstraint", {
-                MaxSize = Vector2.new(360, math.huge),
-                Parent = Card,
-            })
-            New("UIStroke", {
-                Color = "OutlineColor",
-                Parent = Card,
-            })
-            Corner(Card)
-            New("UIPadding", {
-                PaddingBottom = UDim.new(0, 16),
-                PaddingLeft = UDim.new(0, 18),
-                PaddingRight = UDim.new(0, 18),
-                PaddingTop = UDim.new(0, 16),
-                Parent = Card,
-            })
-            New("UIListLayout", {
-                Padding = UDim.new(0, 10),
-                Parent = Card,
-            })
-
-            local function Label(Text, Size, Color, Order, Font)
-                return New("TextLabel", {
-                    AutomaticSize = Enum.AutomaticSize.Y,
-                    BackgroundTransparency = 1,
-                    FontFace = Font or "Font",
-                    LayoutOrder = Order,
-                    Size = UDim2.fromScale(1, 0),
-                    Text = Text,
-                    TextColor3 = Color,
-                    TextSize = Size,
-                    TextWrapped = true,
-                    TextXAlignment = Enum.TextXAlignment.Left,
-                    Parent = Card,
+        --// Shared bits \\--
+        local function Corner(Parent, Radius)
+            table.insert(
+                Library.Corners,
+                New("UICorner", {
+                    CornerRadius = UDim.new(0, Radius or Library.CornerRadius),
+                    Parent = Parent,
                 })
+            )
+        end
+
+        local function Card(LayoutOrder, Height, Parent)
+            local Frame = New("Frame", {
+                BackgroundColor3 = "MainColor",
+                LayoutOrder = LayoutOrder,
+                Size = if typeof(Height) == "number" then UDim2.new(1, -2, 0, Height) else Height,
+                Parent = Parent or TabContainer,
+            })
+            Corner(Frame)
+            New("UIStroke", {
+                ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+                Color = "OutlineColor",
+                Parent = Frame,
+            })
+
+            return Frame
+        end
+
+        local function Eyebrow(Text, Parent, LayoutOrder)
+            return New("TextLabel", {
+                BackgroundTransparency = 1,
+                FontFace = "FontMedium",
+                LayoutOrder = LayoutOrder or 0,
+                Size = UDim2.new(1, 0, 0, 12),
+                Text = Text,
+                TextColor3 = "MutedFontColor",
+                TextSize = 11,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                Parent = Parent,
+            })
+        end
+
+        local function Tile(Parent, LayoutOrder, Size)
+            local Frame = New("Frame", {
+                BackgroundColor3 = "BackgroundColor",
+                LayoutOrder = LayoutOrder,
+                Size = Size,
+                Parent = Parent,
+            })
+            Corner(Frame, math.max(Library.CornerRadius - 2, 4))
+            New("UIStroke", {
+                ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+                Color = "OutlineColor",
+                Transparency = 0.4,
+                Parent = Frame,
+            })
+
+            return Frame
+        end
+
+        local function Notify(Title, Body)
+            Library:Notify({ Title = Title, Description = Body, Time = 4 })
+        end
+
+        local function Copy(Value, Title)
+            if not setclipboard then
+                Notify(Title, Value)
+                return
             end
 
-            --// Header \\--
-            local Header = New("Frame", {
-                AutomaticSize = Enum.AutomaticSize.Y,
-                BackgroundTransparency = 1,
-                LayoutOrder = 1,
-                Size = UDim2.fromScale(1, 0),
-                Parent = Card,
-            })
-            New("UIListLayout", {
-                Padding = UDim.new(0, 3),
-                Parent = Header,
-            })
+            setclipboard(Value)
+            Notify(Title, "Copied to your clipboard.")
+        end
 
-            local TitleRow = New("Frame", {
-                BackgroundTransparency = 1,
-                Size = UDim2.new(1, 0, 0, 20),
-                Parent = Header,
+        ----------------------------------------------------------------------
+        --// Profile card \\--
+        ----------------------------------------------------------------------
+        local Profile = Card(0, 132)
+        Profile.ClipsDescendants = true
+
+        local AvatarImage = New("ImageLabel", {
+            AnchorPoint = Vector2.new(1, 1),
+            BackgroundTransparency = 1,
+            Image = string.format("rbxthumb://type=AvatarBust&id=%d&w=420&h=420", LocalPlayer.UserId),
+            ImageTransparency = 1,
+            Position = UDim2.new(1, 6, 1, 0),
+            ScaleType = Enum.ScaleType.Fit,
+            Size = UDim2.new(0, 150, 1, 0),
+            Parent = Profile,
+        })
+
+        --// Soft edge: the picture dissolves into the card on its left instead of ending
+        --// on a hard line against it
+        New("UIGradient", {
+            Transparency = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 1),
+                NumberSequenceKeypoint.new(0.32, 0.55),
+                NumberSequenceKeypoint.new(0.62, 0),
+                NumberSequenceKeypoint.new(1, 0),
+            }),
+            Parent = AvatarImage,
+        })
+
+        Library:AddAvatarImage(AvatarImage)
+
+        --// Fades up once the thumbnail is actually loaded, so it never pops in
+        task.spawn(function()
+            local Ok = pcall(function()
+                cloneref(game:GetService("ContentProvider")):PreloadAsync({ AvatarImage })
+            end)
+
+            if not AvatarImage.Parent then
+                return
+            end
+
+            if not Ok then
+                AvatarImage.ImageTransparency = 0
+                return
+            end
+
+            TweenService:Create(AvatarImage, Library.GlideTweenInfo, {
+                ImageTransparency = 0,
+            }):Play()
+        end)
+
+        local ProfileText = New("Frame", {
+            BackgroundTransparency = 1,
+            Position = UDim2.fromOffset(16, 14),
+            Size = UDim2.new(1, -180, 1, -28),
+            Parent = Profile,
+        })
+        New("UIListLayout", {
+            Padding = UDim.new(0, 2),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Parent = ProfileText,
+        })
+
+        Eyebrow("WELCOME BACK", ProfileText, 0)
+
+        local DisplayLabel = New("TextLabel", {
+            BackgroundTransparency = 1,
+            FontFace = "FontBold",
+            LayoutOrder = 1,
+            Size = UDim2.new(1, 0, 0, 26),
+            Text = LocalPlayer.DisplayName,
+            TextSize = 22,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Parent = ProfileText,
+        })
+
+        local HandleLabel = New("TextLabel", {
+            BackgroundTransparency = 1,
+            FontFace = "FontMedium",
+            LayoutOrder = 2,
+            Size = UDim2.new(1, 0, 0, 16),
+            Text = "@" .. LocalPlayer.Name,
+            TextColor3 = "MutedFontColor",
+            TextSize = 13,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Parent = ProfileText,
+        })
+
+        --// Both name labels go through the spoiler system, so the sidebar card and this
+        --// one are always hiding or showing the same thing
+        Library:AddSpoilerLabel(DisplayLabel)
+        Library:AddSpoilerLabel(HandleLabel)
+
+        local ChipRow = New("Frame", {
+            AnchorPoint = Vector2.new(0, 1),
+            BackgroundTransparency = 1,
+            LayoutOrder = 3,
+            Position = UDim2.fromScale(0, 1),
+            Size = UDim2.new(1, 0, 0, 26),
+            Parent = ProfileText,
+        })
+        New("UIListLayout", {
+            FillDirection = Enum.FillDirection.Horizontal,
+            Padding = UDim.new(0, 6),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            VerticalAlignment = Enum.VerticalAlignment.Center,
+            Parent = ChipRow,
+        })
+
+        --// A chip reads as on (accent) or off (muted); the caller owns the state
+        local function Chip(Text, IconName, LayoutOrder, Active, OnClick)
+            local Button = New("TextButton", {
+                AutoButtonColor = false,
+                AutomaticSize = Enum.AutomaticSize.X,
+                BackgroundColor3 = "BackgroundColor",
+                LayoutOrder = LayoutOrder,
+                Size = UDim2.fromOffset(0, 26),
+                Text = "",
+                Parent = ChipRow,
+            })
+            Corner(Button, 13)
+            local Stroke = New("UIStroke", {
+                ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+                Color = "OutlineColor",
+                Parent = Button,
+            })
+            New("UIPadding", {
+                PaddingLeft = UDim.new(0, 9),
+                PaddingRight = UDim.new(0, 11),
+                Parent = Button,
             })
             New("UIListLayout", {
                 FillDirection = Enum.FillDirection.Horizontal,
-                Padding = UDim.new(0, 7),
+                Padding = UDim.new(0, 6),
+                SortOrder = Enum.SortOrder.LayoutOrder,
                 VerticalAlignment = Enum.VerticalAlignment.Center,
-                Parent = TitleRow,
+                Parent = Button,
             })
-            New("TextLabel", {
+
+            local ChipIcon = Library:CreateIcon(Library:GetIcon(IconName), {
+                BackgroundTransparency = 1,
+                ImageColor3 = "MutedFontColor",
+                LayoutOrder = 0,
+                Size = UDim2.fromOffset(13, 13),
+                Parent = Button,
+            })
+
+            local ChipLabel = New("TextLabel", {
                 AutomaticSize = Enum.AutomaticSize.X,
                 BackgroundTransparency = 1,
-                FontFace = "FontBold",
-                Size = UDim2.fromScale(0, 1),
-                Text = Info.Title or Name,
-                TextSize = 16,
-                Parent = TitleRow,
-            })
-            local Dot = New("Frame", {
-                BackgroundColor3 = "AccentColor",
+                FontFace = "FontMedium",
                 LayoutOrder = 1,
-                Size = UDim2.fromOffset(7, 7),
-                Parent = TitleRow,
+                Size = UDim2.fromOffset(0, 26),
+                Text = Text,
+                TextColor3 = "MutedFontColor",
+                TextSize = 12,
+                Parent = Button,
             })
-            Corner(Dot, 4)
 
-            if Info.Subtitle then
-                New("TextLabel", {
-                    AutomaticSize = Enum.AutomaticSize.Y,
-                    BackgroundTransparency = 1,
-                    Size = UDim2.fromScale(1, 0),
-                    Text = Info.Subtitle,
-                    TextColor3 = "MutedFontColor",
-                    TextSize = 13,
-                    TextXAlignment = Enum.TextXAlignment.Left,
-                    Parent = Header,
+            local State = Active == true
+            local function Paint()
+                local Accent = Library.Scheme.AccentColor
+                TweenService:Create(Button, Library.TweenInfo, {
+                    BackgroundColor3 = if State then Library:GetDarkerColor(Accent) else Library.Scheme.BackgroundColor,
+                }):Play()
+                TweenService:Create(Stroke, Library.TweenInfo, {
+                    Color = if State then Accent else Library.Scheme.OutlineColor,
+                }):Play()
+                TweenService:Create(ChipLabel, Library.TweenInfo, {
+                    TextColor3 = if State then Accent else GetSchemeValue("MutedFontColor"),
+                }):Play()
+                SetIconProperties(ChipIcon, {
+                    ImageColor3 = if State then Accent else GetSchemeValue("MutedFontColor"),
                 })
             end
 
-            New("Frame", {
-                BackgroundColor3 = "OutlineColor",
-                LayoutOrder = 2,
-                Size = UDim2.new(1, 0, 0, 1),
-                Parent = Card,
+            Button.MouseButton1Click:Connect(function()
+                State = not State
+                Paint()
+                OnClick(State)
+            end)
+
+            Paint()
+
+            return {
+                Button = Button,
+                Set = function(Value: boolean)
+                    State = Value == true
+                    Paint()
+                end,
+            }
+        end
+
+        --// Name hides both name labels here and the one in the sidebar card; on by default
+        local NameChip
+        NameChip = Chip("Name", "eye-off", 0, Library.Spoiler, function(State)
+            Library:SetSpoiler(State)
+        end)
+
+        --// Avatar blanks every avatar image the library shows; off by default
+        local AvatarChip
+        AvatarChip = Chip("Avatar", "user", 1, Library.HideAvatar, function(State)
+            Library:SetAvatarHidden(State)
+        end)
+
+        Tab.NameChip = NameChip
+        Tab.AvatarChip = AvatarChip
+
+        ----------------------------------------------------------------------
+        --// Performance card: FPS and ping, each with a live history \\--
+        ----------------------------------------------------------------------
+        local Perf = Card(1, 152)
+        New("UIPadding", {
+            PaddingTop = UDim.new(0, 14),
+            PaddingBottom = UDim.new(0, 12),
+            PaddingLeft = UDim.new(0, 16),
+            PaddingRight = UDim.new(0, 16),
+            Parent = Perf,
+        })
+
+        local Graphs = New("Frame", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 78),
+            Parent = Perf,
+        })
+        New("UIListLayout", {
+            FillDirection = Enum.FillDirection.Horizontal,
+            Padding = UDim.new(0, 26),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Parent = Graphs,
+        })
+
+        local BarCount = 44
+        local GoodColor = Color3.fromRGB(126, 201, 155)
+        local LiveColor = Color3.fromRGB(165, 231, 193)
+
+        --// One metric: title, min/avg/max, the current reading, and a bar history
+        local function Graph(Title, Unit, LayoutOrder)
+            local Holder = New("Frame", {
+                BackgroundTransparency = 1,
+                LayoutOrder = LayoutOrder,
+                Size = UDim2.new(0.5, -13, 1, 0),
+                Parent = Graphs,
             })
 
-            Label(Info.Text or "Enter your key to continue.", 13, "MutedFontColor", 3)
+            local Head = New("Frame", {
+                BackgroundTransparency = 1,
+                Size = UDim2.new(1, 0, 0, 13),
+                Parent = Holder,
+            })
 
-            --// Input \\--
-            local Box = New("TextBox", {
-                BackgroundColor3 = "MainColor",
-                ClearTextOnFocus = false,
-                LayoutOrder = 4,
-                PlaceholderText = Info.Placeholder or "your key...",
-                Size = UDim2.new(1, 0, 0, 32),
-                TextSize = 14,
-                TextTruncate = Enum.TextTruncate.AtEnd,
+            New("TextLabel", {
+                BackgroundTransparency = 1,
+                FontFace = "FontMedium",
+                Size = UDim2.new(0.5, 0, 1, 0),
+                Text = Title,
+                TextColor3 = "MutedFontColor",
+                TextSize = 12,
                 TextXAlignment = Enum.TextXAlignment.Left,
-                Parent = Card,
+                Parent = Head,
             })
-            New("UIPadding", {
-                PaddingLeft = UDim.new(0, 10),
-                PaddingRight = UDim.new(0, 10),
-                Parent = Box,
+
+            local Range = New("TextLabel", {
+                AnchorPoint = Vector2.new(1, 0),
+                BackgroundTransparency = 1,
+                FontFace = "FontMedium",
+                Position = UDim2.fromScale(1, 0),
+                Size = UDim2.new(0.7, 0, 1, 0),
+                Text = "",
+                TextColor3 = "MutedFontColor",
+                TextSize = 11,
+                TextXAlignment = Enum.TextXAlignment.Right,
+                Parent = Head,
             })
-            local BoxStroke = New("UIStroke", {
+
+            local ValueLabel = New("TextLabel", {
+                BackgroundTransparency = 1,
+                FontFace = "FontBold",
+                Position = UDim2.fromOffset(0, 18),
+                Size = UDim2.new(1, 0, 0, 22),
+                Text = "--",
+                TextSize = 20,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                Parent = Holder,
+            })
+
+            local UnitLabel = New("TextLabel", {
+                BackgroundTransparency = 1,
+                FontFace = "FontMedium",
+                Position = UDim2.fromOffset(0, 22),
+                Size = UDim2.new(1, 0, 0, 14),
+                Text = Unit,
+                TextColor3 = "MutedFontColor",
+                TextSize = 12,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                Parent = Holder,
+            })
+
+            local Bars = New("Frame", {
+                AnchorPoint = Vector2.new(0, 1),
+                BackgroundTransparency = 1,
+                Position = UDim2.fromScale(0, 1),
+                Size = UDim2.new(1, 0, 0, 24),
+                Parent = Holder,
+            })
+            New("UIListLayout", {
+                FillDirection = Enum.FillDirection.Horizontal,
+                Padding = UDim.new(0, 2),
+                SortOrder = Enum.SortOrder.LayoutOrder,
+                VerticalAlignment = Enum.VerticalAlignment.Bottom,
+                Parent = Bars,
+            })
+
+            local BarList = {}
+            for Index = 1, BarCount do
+                local Bar = New("Frame", {
+                    BackgroundColor3 = GoodColor,
+                    BackgroundTransparency = 0.45,
+                    BorderSizePixel = 0,
+                    LayoutOrder = Index,
+                    Size = UDim2.new(1 / BarCount, -2, 0.12, 0),
+                    Parent = Bars,
+                })
+                New("UICorner", {
+                    CornerRadius = UDim.new(0, 1),
+                    Parent = Bar,
+                })
+
+                table.insert(BarList, Bar)
+            end
+
+            return {
+                Value = ValueLabel,
+                Unit = UnitLabel,
+                Range = Range,
+                Bars = BarList,
+                History = {},
+                Min = math.huge,
+                Max = 0,
+                Total = 0,
+                Samples = 0,
+                Warmup = true,
+            }
+        end
+
+        local FpsGraph = Graph("FPS", "fps", 0)
+        local PingGraph = Graph("Ping", "ms", 1)
+
+        --// The unit sits right after the number, so it follows the number's width
+        local function PlaceUnit(Graph, Text: string)
+            Graph.Value.Text = Text
+            local Width = TextService:GetTextSize(Text, 20, Enum.Font.GothamBold, Vector2.new(1000, 100)).X
+            Graph.Unit.Position = UDim2.fromOffset(math.ceil(Width) + 5, 22)
+        end
+
+        local function PushSample(Graph, Value: number, Ceiling: number)
+            table.insert(Graph.History, Value)
+            if #Graph.History > BarCount then
+                table.remove(Graph.History, 1)
+            end
+
+            --// The first reading lands while the UI is still being built, so it is drawn
+            --// but kept out of the min/avg/max
+            if Graph.Warmup then
+                Graph.Warmup = false
+                return
+            end
+
+            Graph.Min = math.min(Graph.Min, Value)
+            Graph.Max = math.max(Graph.Max, Value)
+            Graph.Total += Value
+            Graph.Samples += 1
+
+            local Average = Graph.Total / math.max(Graph.Samples, 1)
+            Graph.Range.Text = string.format(
+                "min %d   avg %d   max %d",
+                math.round(Graph.Min),
+                math.round(Average),
+                math.round(Graph.Max)
+            )
+
+            --// Bars are scaled against the busiest reading on screen, never a flat line
+            local Peak = math.max(Ceiling, Graph.Max, 1)
+            local Count = #Graph.History
+            for Index, Bar in Graph.Bars do
+                local Sample = Graph.History[Index - (BarCount - Count)]
+                if Sample == nil then
+                    Bar.Size = UDim2.new(1 / BarCount, -2, 0.1, 0)
+                    Bar.BackgroundTransparency = 0.8
+                    continue
+                end
+
+                local Newest = Index == BarCount
+                Bar.Size = UDim2.new(1 / BarCount, -2, math.clamp(Sample / Peak, 0.1, 1), 0)
+                Bar.BackgroundColor3 = if Newest then LiveColor else GoodColor
+                Bar.BackgroundTransparency = if Newest then 0.1 else 0.45
+            end
+        end
+
+        ----------------------------------------------------------------------
+        --// Session row: players, executions, uptime \\--
+        ----------------------------------------------------------------------
+        New("Frame", {
+            AnchorPoint = Vector2.new(0, 1),
+            BackgroundColor3 = "OutlineColor",
+            BackgroundTransparency = 0.4,
+            BorderSizePixel = 0,
+            Position = UDim2.new(0, 0, 1, -44),
+            Size = UDim2.new(1, 0, 0, 1),
+            Parent = Perf,
+        })
+
+        local SessionRow = New("Frame", {
+            AnchorPoint = Vector2.new(0, 1),
+            BackgroundTransparency = 1,
+            Position = UDim2.fromScale(0, 1),
+            Size = UDim2.new(1, 0, 0, 34),
+            Parent = Perf,
+        })
+        New("UIListLayout", {
+            FillDirection = Enum.FillDirection.Horizontal,
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Parent = SessionRow,
+        })
+
+        local function SessionStat(Title, LayoutOrder)
+            local Holder = New("Frame", {
+                BackgroundTransparency = 1,
+                LayoutOrder = LayoutOrder,
+                Size = UDim2.new(1 / 3, 0, 1, 0),
+                Parent = SessionRow,
+            })
+
+            local ValueLabel = New("TextLabel", {
+                BackgroundTransparency = 1,
+                FontFace = "FontBold",
+                Size = UDim2.new(1, 0, 0, 17),
+                Text = "--",
+                TextSize = 15,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                Parent = Holder,
+            })
+
+            New("TextLabel", {
+                BackgroundTransparency = 1,
+                FontFace = "FontMedium",
+                Position = UDim2.fromOffset(0, 18),
+                Size = UDim2.new(1, 0, 0, 14),
+                Text = Title,
+                TextColor3 = "MutedFontColor",
+                TextSize = 12,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                Parent = Holder,
+            })
+
+            return ValueLabel
+        end
+
+        local PlayersValue = SessionStat("Players", 0)
+        local ExecsValue = SessionStat("Execs", 1)
+        local SessionValue = SessionStat("Session", 2)
+
+        ExecsValue.Text = tostring(Library.ExecCount or 1)
+
+        ----------------------------------------------------------------------
+        --// Bottom row: the place you're in, and where to find us \\--
+        ----------------------------------------------------------------------
+        local BottomRow = New("Frame", {
+            BackgroundTransparency = 1,
+            LayoutOrder = 2,
+            Size = UDim2.new(1, -2, 0, 186),
+            Parent = TabContainer,
+        })
+        New("UIListLayout", {
+            FillDirection = Enum.FillDirection.Horizontal,
+            Padding = UDim.new(0, 10),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Parent = BottomRow,
+        })
+
+        local GameCard = Card(0, UDim2.new(0.5, -5, 1, 0), BottomRow)
+        New("UIPadding", {
+            PaddingTop = UDim.new(0, 14),
+            PaddingBottom = UDim.new(0, 12),
+            PaddingLeft = UDim.new(0, 14),
+            PaddingRight = UDim.new(0, 14),
+            Parent = GameCard,
+        })
+
+        local GameIcon = New("ImageLabel", {
+            BackgroundColor3 = "BackgroundColor",
+            Image = string.format("rbxthumb://type=GameIcon&id=%d&w=150&h=150", game.PlaceId),
+            Size = UDim2.fromOffset(44, 44),
+            Parent = GameCard,
+        })
+        Corner(GameIcon, math.max(Library.CornerRadius - 2, 4))
+
+        local GameName = New("TextLabel", {
+            BackgroundTransparency = 1,
+            FontFace = "FontBold",
+            Position = UDim2.fromOffset(54, 2),
+            Size = UDim2.new(1, -54, 0, 18),
+            Text = "Loading place...",
+            TextSize = 14,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Parent = GameCard,
+        })
+
+        local GameMeta = New("TextLabel", {
+            BackgroundTransparency = 1,
+            FontFace = "FontMedium",
+            Position = UDim2.fromOffset(54, 22),
+            Size = UDim2.new(1, -54, 0, 15),
+            Text = "",
+            TextColor3 = "MutedFontColor",
+            TextSize = 12,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Parent = GameCard,
+        })
+
+        --// Server actions \\--
+        local Actions = New("Frame", {
+            BackgroundTransparency = 1,
+            Position = UDim2.fromOffset(0, 60),
+            Size = UDim2.new(1, 0, 0, 56),
+            Parent = GameCard,
+        })
+        New("UIListLayout", {
+            FillDirection = Enum.FillDirection.Horizontal,
+            Padding = UDim.new(0, 6),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Parent = Actions,
+        })
+
+        local function Action(Text, IconName, LayoutOrder, OnClick)
+            local Button = New("TextButton", {
+                AutoButtonColor = false,
+                BackgroundColor3 = "BackgroundColor",
+                LayoutOrder = LayoutOrder,
+                Size = UDim2.new(0.25, -5, 1, 0),
+                Text = "",
+                Parent = Actions,
+            })
+            Corner(Button, math.max(Library.CornerRadius - 2, 4))
+            local ActionStroke = New("UIStroke", {
                 ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
                 Color = "OutlineColor",
-                Parent = Box,
+                Transparency = 0.4,
+                Parent = Button,
             })
-            Corner(Box)
 
-            local Status = Label("", 12, "RedColor", 5)
-            Status.Visible = false
+            local ActionIcon = Library:CreateIcon(Library:GetIcon(IconName), {
+                AnchorPoint = Vector2.new(0.5, 0),
+                BackgroundTransparency = 1,
+                ImageColor3 = "MutedFontColor",
+                ImageTransparency = 0.15,
+                Position = UDim2.new(0.5, 0, 0, 13),
+                Size = UDim2.fromOffset(17, 17),
+                Parent = Button,
+            })
 
-            --// Buttons \\--
-            local function MakeButton(Text, Primary, Parent, Order, Size)
-                local BgKey = Primary and "AccentColor" or "MainColor"
-                local Button = New("TextButton", {
-                    BackgroundColor3 = BgKey,
-                    FontFace = "FontBold",
-                    LayoutOrder = Order,
-                    Size = Size,
-                    Text = Text,
-                    TextColor3 = Primary and "BackgroundColor" or "FontColor",
-                    TextSize = 14,
-                    Parent = Parent,
-                })
-                Corner(Button)
-                if not Primary then
-                    New("UIStroke", {
-                        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-                        Color = "OutlineColor",
-                        Parent = Button,
+            local ActionLabel = New("TextLabel", {
+                AnchorPoint = Vector2.new(0.5, 1),
+                BackgroundTransparency = 1,
+                FontFace = "FontMedium",
+                Position = UDim2.new(0.5, 0, 1, -9),
+                Size = UDim2.new(1, -4, 0, 13),
+                Text = Text,
+                TextColor3 = "MutedFontColor",
+                TextSize = 11,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                Parent = Button,
+            })
+
+            --// Hover lifts the whole tile to full contrast and warms the outline, so it
+            --// reads as a control rather than a flat panel
+            local Scale = New("UIScale", { Parent = Button })
+            BindInteraction(Button, {
+                Scale = Scale,
+                PressScale = 0.97,
+                OnHover = function(Hovering)
+                    TweenService:Create(Button, Library.HoverTweenInfo, {
+                        BackgroundColor3 = if Hovering
+                            then Library:GetBetterColor(Library.Scheme.BackgroundColor, 10)
+                            else Library.Scheme.BackgroundColor,
+                    }):Play()
+                    TweenService:Create(ActionStroke, Library.HoverTweenInfo, {
+                        Color = if Hovering
+                            then Library:GetLighterColor(Library.Scheme.OutlineColor)
+                            else Library.Scheme.OutlineColor,
+                        Transparency = if Hovering then 0 else 0.4,
+                    }):Play()
+                    TweenService:Create(ActionLabel, Library.HoverTweenInfo, {
+                        TextColor3 = if Hovering then Library.Scheme.FontColor else GetSchemeValue("MutedFontColor"),
+                    }):Play()
+                    TweenIcon(ActionIcon, {
+                        ImageColor3 = if Hovering then Library.Scheme.FontColor else GetSchemeValue("MutedFontColor"),
+                        ImageTransparency = if Hovering then 0 else 0.15,
                     })
-                end
+                end,
+            })
 
-                local Scale = New("UIScale", { Parent = Button })
-                BindInteraction(Button, {
-                    Scale = Scale,
-                    PressScale = 0.97,
-                    Enabled = function()
-                        return not Checking
-                    end,
-                    OnHover = function(Hovering)
-                        local Base = Library.Scheme[BgKey]
-                        TweenService:Create(Button, Library.TweenInfo, {
-                            BackgroundColor3 = Hovering and Library:GetBetterColor(Base, Primary and -12 or 8) or Base,
-                        }):Play()
-                    end,
-                })
+            Button.MouseButton1Click:Connect(OnClick)
 
-                return Button
-            end
+            return Button
+        end
 
-            local CheckText = Info.ButtonText or "Check key"
-            local CheckButton = MakeButton(CheckText, true, Card, 6, UDim2.new(1, 0, 0, 32))
+        --// The public server list is an executor http call; without one, only rejoin works
+        local function FetchServers(): { any }?
+            local Request = (syn and syn.request) or (http and http.request) or http_request or request
+            local Url = string.format(
+                "https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100",
+                game.PlaceId
+            )
 
-            local function RunAction(Action, Copied)
-                if typeof(Action) == "function" then
-                    Action()
-                elseif typeof(Action) == "string" then
-                    if setclipboard then
-                        setclipboard(Action)
-                    end
-                    Library:Notify({
-                        Title = Copied,
-                        Description = setclipboard and "Link copied to clipboard." or Action,
-                        Time = 3,
-                    })
+            local Body
+            if typeof(Request) == "function" then
+                local Ok, Response = pcall(Request, { Url = Url, Method = "GET" })
+                if Ok and typeof(Response) == "table" then
+                    Body = Response.Body
                 end
             end
 
-            local Secondary = {}
-            if Info.GetKey then
-                table.insert(Secondary, { Info.GetKeyText or "Get key", Info.GetKey })
-            end
-            if Info.Premium then
-                table.insert(Secondary, { Info.PremiumText or "Buy premium", Info.Premium })
-            end
-
-            if #Secondary > 0 then
-                local Row = New("Frame", {
-                    BackgroundTransparency = 1,
-                    LayoutOrder = 7,
-                    Size = UDim2.new(1, 0, 0, 30),
-                    Parent = Card,
-                })
-                New("UIListLayout", {
-                    FillDirection = Enum.FillDirection.Horizontal,
-                    Padding = UDim.new(0, 8),
-                    Parent = Row,
-                })
-
-                local Gap = 8 * (#Secondary - 1) / #Secondary
-                for Index, Entry in Secondary do
-                    local Button = MakeButton(Entry[1], false, Row, Index, UDim2.new(1 / #Secondary, -Gap, 1, 0))
-                    Button.MouseButton1Click:Connect(function()
-                        RunAction(Entry[2], Entry[1])
-                    end)
+            if Body == nil then
+                local Ok, Response = pcall(function()
+                    return game:HttpGet(Url)
+                end)
+                if Ok then
+                    Body = Response
                 end
             end
 
-            if Info.Footer then
-                Label(Info.Footer, 12, "MutedFontColor", 8)
+            if typeof(Body) ~= "string" then
+                return nil
             end
 
-            --// Logic \\--
-            function KeyBox:SetStatus(Text: string?, Success: boolean?)
-                Status.Visible = Text ~= nil and Text ~= ""
-                Status.Text = Text or ""
-                Recolor(Status, "TextColor3", Success and "AccentColor" or "RedColor")
-                Recolor(BoxStroke, "Color", if Text == nil or Text == "" then "OutlineColor" elseif Success then "AccentColor" else "RedColor")
+            local Ok, Decoded = pcall(HttpService.JSONDecode, HttpService, Body)
+            if not (Ok and typeof(Decoded) == "table" and typeof(Decoded.data) == "table") then
+                return nil
             end
 
-            local function Validate(Key)
-                if Info.Validate then
-                    return Info.Validate(Key)
-                end
+            return Decoded.data
+        end
 
-                local Expected = Info.ExpectedKey
-                if typeof(Expected) == "table" then
-                    return table.find(Expected, Key) ~= nil
-                end
-
-                return Key == Expected
-            end
-
-            function KeyBox:Submit()
-                if Checking then
+        local function JoinServer(Pick: (({ any }) -> any))
+            task.spawn(function()
+                local Servers = FetchServers()
+                if not Servers then
+                    Notify("Server list", "This executor can't read the server list.")
                     return
                 end
 
-                local Key = Box.Text:gsub("^%s+", ""):gsub("%s+$", "")
-                if Key == "" then
-                    KeyBox:SetStatus("Enter a key first.", false)
+                local Choice = Pick(Servers)
+                if not Choice then
+                    Notify("Server list", "No other server to join right now.")
                     return
                 end
 
-                if Info.Legacy then
-                    Info.Callback(Key)
-                    return
+                local Ok, Error = pcall(function()
+                    TeleportService:TeleportToPlaceInstance(game.PlaceId, Choice.id, LocalPlayer)
+                end)
+
+                if not Ok then
+                    Notify("Teleport failed", tostring(Error))
+                end
+            end)
+        end
+
+        Action("Rejoin", "rotate-cw", 0, function()
+            local Ok, Error = pcall(function()
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+            end)
+
+            if not Ok then
+                Notify("Rejoin failed", tostring(Error))
+            end
+        end)
+
+        Action("Hop", "shuffle", 1, function()
+            JoinServer(function(Servers)
+                local Candidates = {}
+                for _, Server in Servers do
+                    if Server.id ~= game.JobId and (Server.playing or 0) < (Server.maxPlayers or 0) then
+                        table.insert(Candidates, Server)
+                    end
                 end
 
-                Checking = true
-                CheckButton.Text = "Checking..."
-                KeyBox:SetStatus(nil)
+                return Candidates[math.random(1, math.max(#Candidates, 1))]
+            end)
+        end)
 
-                task.spawn(function()
-                    local Ok, Success, Message = pcall(Validate, Key)
-                    if not Ok then
-                        Success, Message = false, "Couldn't check key."
+        Action("Lowest", "users", 2, function()
+            JoinServer(function(Servers)
+                local Best, BestCount = nil, math.huge
+                for _, Server in Servers do
+                    local Playing = Server.playing or 0
+                    if Server.id ~= game.JobId and Playing < BestCount and Playing < (Server.maxPlayers or 0) then
+                        Best, BestCount = Server, Playing
                     end
-                    Success = Success == true
+                end
 
-                    Checking = false
-                    CheckButton.Text = CheckText
-                    KeyBox:SetStatus(Message or (Success and "Key accepted." or "Invalid key."), Success)
+                return Best
+            end)
+        end)
 
-                    if Success and Info.SaveKey and writefile then
-                        pcall(writefile, Info.SaveKey, Key)
-                    end
+        Action("Job ID", "copy", 3, function()
+            Copy(game.JobId, "Job ID")
+        end)
 
-                    if Info.Callback then
-                        Info.Callback(Success, Key)
-                    end
+        local GameFooter = New("TextLabel", {
+            AnchorPoint = Vector2.new(0, 1),
+            BackgroundTransparency = 1,
+            FontFace = "FontMedium",
+            Position = UDim2.fromScale(0, 1),
+            Size = UDim2.new(1, 0, 0, 14),
+            Text = "",
+            TextColor3 = "MutedFontColor",
+            TextSize = 11,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Parent = GameCard,
+        })
+
+        do
+            local Job = tostring(game.JobId)
+            local Short = if #Job > 12 then Job:sub(1, 8) .. "..." .. Job:sub(-4) else Job
+            GameFooter.Text = string.format("Job %s  ·  Place %d", Short, game.PlaceId)
+        end
+
+        ----------------------------------------------------------------------
+        --// Links \\--
+        ----------------------------------------------------------------------
+        local LinksCard = Card(1, UDim2.new(0.5, -5, 1, 0), BottomRow)
+        New("UIPadding", {
+            PaddingTop = UDim.new(0, 14),
+            PaddingBottom = UDim.new(0, 12),
+            PaddingLeft = UDim.new(0, 14),
+            PaddingRight = UDim.new(0, 14),
+            Parent = LinksCard,
+        })
+
+        Eyebrow("LINKS", LinksCard, 0)
+
+        local LinkList = New("Frame", {
+            BackgroundTransparency = 1,
+            Position = UDim2.fromOffset(0, 22),
+            Size = UDim2.new(1, 0, 1, -22),
+            Parent = LinksCard,
+        })
+        New("UIListLayout", {
+            Padding = UDim.new(0, 8),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Parent = LinkList,
+        })
+
+        local function LinkRow(Title, Subtitle, IconName, LayoutOrder, Value)
+            local Row = Tile(LinkList, LayoutOrder, UDim2.new(1, 0, 0, 46))
+
+            Library:CreateIcon(Library:GetIcon(IconName), {
+                AnchorPoint = Vector2.new(0, 0.5),
+                BackgroundTransparency = 1,
+                ImageColor3 = "MutedFontColor",
+                Position = UDim2.new(0, 12, 0.5, 0),
+                Size = UDim2.fromOffset(16, 16),
+                Parent = Row,
+            })
+
+            New("TextLabel", {
+                BackgroundTransparency = 1,
+                FontFace = "FontBold",
+                Position = UDim2.new(0, 38, 0.5, -15),
+                Size = UDim2.new(1, -86, 0, 15),
+                Text = Title,
+                TextSize = 13,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                Parent = Row,
+            })
+
+            New("TextLabel", {
+                BackgroundTransparency = 1,
+                FontFace = "FontMedium",
+                Position = UDim2.new(0, 38, 0.5, 2),
+                Size = UDim2.new(1, -86, 0, 14),
+                Text = Subtitle,
+                TextColor3 = "MutedFontColor",
+                TextSize = 12,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                Parent = Row,
+            })
+
+            local CopyButton = New("TextButton", {
+                AnchorPoint = Vector2.new(1, 0.5),
+                AutoButtonColor = false,
+                BackgroundColor3 = "MainColor",
+                Position = UDim2.new(1, -10, 0.5, 0),
+                Size = UDim2.fromOffset(30, 30),
+                Text = "",
+                Parent = Row,
+            })
+            Corner(CopyButton, math.max(Library.CornerRadius - 3, 4))
+            New("UIStroke", {
+                ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+                Color = "OutlineColor",
+                Transparency = 0.4,
+                Parent = CopyButton,
+            })
+            Library:CreateIcon(Library:GetIcon("copy"), {
+                AnchorPoint = Vector2.new(0.5, 0.5),
+                BackgroundTransparency = 1,
+                ImageColor3 = "MutedFontColor",
+                Position = UDim2.fromScale(0.5, 0.5),
+                Size = UDim2.fromOffset(14, 14),
+                Parent = CopyButton,
+            })
+
+            local Scale = New("UIScale", { Parent = CopyButton })
+            BindInteraction(CopyButton, {
+                Scale = Scale,
+                PressScale = 0.94,
+                OnHover = function(Hovering)
+                    TweenService:Create(CopyButton, Library.TweenInfo, {
+                        BackgroundColor3 = if Hovering
+                            then Library:GetBetterColor(Library.Scheme.MainColor, 8)
+                            else Library.Scheme.MainColor,
+                    }):Play()
+                end,
+            })
+
+            CopyButton.MouseButton1Click:Connect(function()
+                Copy(Value, Title)
+            end)
+
+            return Row
+        end
+
+        --// Defaults come from Library.Discord so a script that already set its invite
+        --// and site gets them here too
+        local DiscordInfo = Library.Discord or {}
+        local Invite = Info.Invite or DiscordInfo.Invite or ""
+        local InviteCode = Invite:match("([%w%-]+)%s*$") or ""
+        local InviteLink = if Invite:match("^https?://") then Invite else string.format("https://discord.gg/%s", InviteCode)
+
+        local Website = Info.Website
+        if not Website and typeof(DiscordInfo.Links) == "table" then
+            for _, Link in DiscordInfo.Links do
+                if typeof(Link) == "table" and Link.Url then
+                    Website = Link.Url
+                    break
+                end
+            end
+        end
+        Website = Website or ""
+
+        if Invite ~= "" then
+            LinkRow(
+                Info.CommunityName or "Community",
+                if InviteCode ~= "" then "discord.gg/" .. InviteCode else InviteLink,
+                "message-circle",
+                0,
+                InviteLink
+            )
+        end
+
+        if Website ~= "" then
+            LinkRow(
+                Info.WebsiteName or "Website",
+                (Website:gsub("^https?://", ""):gsub("/$", "")),
+                "globe",
+                1,
+                Website
+            )
+        end
+
+        ----------------------------------------------------------------------
+        --// Live updates: only while the tab is the one on screen \\--
+        ----------------------------------------------------------------------
+        local StepConnection, SampleThread
+        local FrameTime = 1 / 60
+
+        local function ReadPing(): number
+            local Ok, Value = pcall(function()
+                local Network = game:GetService("Stats"):FindFirstChild("Network")
+                local Items = Network and Network:FindFirstChild("ServerStatsItem")
+                local Ping = Items and Items:FindFirstChild("Data Ping")
+                return Ping and (Ping :: any):GetValue()
+            end)
+
+            if not Ok or typeof(Value) ~= "number" then
+                return 0
+            end
+
+            return Value
+        end
+
+        local function FormatSession(Seconds: number): string
+            local Total = math.max(math.floor(Seconds), 0)
+            local Hours = math.floor(Total / 3600)
+            local Minutes = math.floor((Total % 3600) / 60)
+            local Secs = Total % 60
+
+            if Hours > 0 then
+                return string.format("%dh %dm", Hours, Minutes)
+            end
+
+            return string.format("%dm %ds", Minutes, Secs)
+        end
+
+        local PlaceCreator = nil
+
+        local function PlayerCount(): string
+            return string.format("%d/%d", #Players:GetPlayers(), math.max(Players.MaxPlayers, 1))
+        end
+
+        local function RefreshSession()
+            local Count = PlayerCount()
+            PlayersValue.Text = Count
+            SessionValue.Text = FormatSession(os.clock() - (Library.LoadedAt or os.clock()))
+
+            if GameMeta.Parent then
+                GameMeta.Text = if PlaceCreator
+                    then string.format("by %s  ·  %s players", PlaceCreator, Count)
+                    else string.format("%s players", Count)
+            end
+        end
+
+        local function StartLive()
+            if not StepConnection then
+                StepConnection = RunService.RenderStepped:Connect(function(DeltaTime: number)
+                    FrameTime += (DeltaTime - FrameTime) * 0.1
+                    PlaceUnit(FpsGraph, tostring(math.clamp(math.round(1 / math.max(FrameTime, 1e-4)), 0, 999)))
                 end)
             end
 
-            Box.Focused:Connect(function()
-                if not Status.Visible then
-                    Recolor(BoxStroke, "Color", "AccentColor")
-                end
-            end)
-            Box.FocusLost:Connect(function(EnterPressed)
-                if not Status.Visible then
-                    Recolor(BoxStroke, "Color", "OutlineColor")
-                end
-                if EnterPressed then
-                    KeyBox:Submit()
-                end
-            end)
-            Box:GetPropertyChangedSignal("Text"):Connect(function()
-                if Status.Visible and not Checking then
-                    KeyBox:SetStatus(nil)
-                end
-            end)
-            CheckButton.MouseButton1Click:Connect(KeyBox.Submit)
+            if not SampleThread then
+                SampleThread = task.spawn(function()
+                    while Library.ActiveTab == Tab and not Tab.Destroyed do
+                        PushSample(FpsGraph, math.clamp(1 / math.max(FrameTime, 1e-4), 0, 999), 60)
 
-            --// Saved key: prefill and check it straight away \\--
-            if Info.SaveKey and isfile and readfile then
-                local Ok, Saved = pcall(function()
-                    return isfile(Info.SaveKey) and readfile(Info.SaveKey)
-                end)
-                if Ok and typeof(Saved) == "string" and Saved ~= "" then
-                    Box.Text = Saved
-                    task.defer(KeyBox.Submit)
-                end
-            end
+                        local Ping = ReadPing()
+                        if Ping > 0 then
+                            PushSample(PingGraph, Ping, 100)
+                            PlaceUnit(PingGraph, tostring(math.round(Ping)))
+                        else
+                            PlaceUnit(PingGraph, "--")
+                            PingGraph.Range.Text = "no data"
+                        end
 
-            KeyBox.Box = Box
-            KeyBox.Card = Card
-            return KeyBox
-        end
-
-        function Tab:Destroy()
-            if TabContainer then
-                TabContainer:Destroy()
-            end
-
-            if TabButton then
-                for Index, Entry in Library.TabButtons do
-                    if typeof(Entry) == "table" and Entry.Button == TabButton then
-                        table.remove(Library.TabButtons, Index)
-                        break
+                        RefreshSession()
+                        task.wait(0.5)
                     end
-                end
 
-                TabButton:Destroy()
+                    SampleThread = nil
+                end)
+            end
+        end
+
+        local function StopLive()
+            if StepConnection then
+                StepConnection:Disconnect()
+                StepConnection = nil
+            end
+        end
+
+        --// Place details come in late, so they are filled when they arrive
+        task.spawn(function()
+            local Ok, Product = pcall(function()
+                return MarketplaceService:GetProductInfo(game.PlaceId)
+            end)
+
+            if not (Ok and typeof(Product) == "table") then
+                GameName.Text = "This place"
+                return
             end
 
-            Library.Tabs[Name] = nil
-        end
+            if GameName.Parent then
+                GameName.Text = tostring(Product.Name or "This place")
+            end
 
-        function Tab:SetOrder(NewOrder: number)
-            Order = NewOrder
-            TabButton.LayoutOrder = Order
-        end
+            if typeof(Product.Creator) == "table" and Product.Creator.Name then
+                PlaceCreator = tostring(Product.Creator.Name)
+            end
 
+            RefreshSession()
+        end)
+
+        RefreshSession()
+        PlaceUnit(FpsGraph, "--")
+        PlaceUnit(PingGraph, "--")
+
+        ----------------------------------------------------------------------
+        --// Tab plumbing: same contract as the other built-in tabs \\--
+        ----------------------------------------------------------------------
         function Tab:RefreshSides() end
         function Tab:Resize() end
         function Tab:UpdateCorners() end
@@ -16491,28 +17377,18 @@ function Library:CreateWindow(WindowInfo)
             TweenService:Create(TabStroke, Library.TweenInfo, {
                 Transparency = 0,
             }):Play()
-
-
             TweenService:Create(TabLabel, Library.TweenInfo, {
                 TextTransparency = 0,
             }):Play()
-
             if TabIcon then
                 TweenIcon(TabIcon, { ImageTransparency = 0 })
             end
 
             Library:PlayTabAnimation(Tab, true)
-
             Window:ShowTabInfo(Name, Description)
 
-            Tab:RefreshSides()
-
             Library.ActiveTab = Tab
-            SyncSubTabStrips()
-
-            if Library.Searching then
-                Library:UpdateSearch(Library.SearchText)
-            end
+            StartLive()
         end
 
         function Tab:Hide()
@@ -16522,12 +17398,9 @@ function Library:CreateWindow(WindowInfo)
             TweenService:Create(TabStroke, Library.TweenInfo, {
                 Transparency = 1,
             }):Play()
-
-
             TweenService:Create(TabLabel, Library.TweenInfo, {
                 TextTransparency = 0.5,
             }):Play()
-
             if TabIcon then
                 TweenIcon(TabIcon, { ImageTransparency = 0.5 })
             end
@@ -16535,6 +17408,7 @@ function Library:CreateWindow(WindowInfo)
             Library:PlayTabAnimation(Tab, false)
             Window:HideTabInfo()
 
+            StopLive()
             Library.PreviousTab = Tab
             Library.ActiveTab = nil
         end
@@ -16545,6 +17419,11 @@ function Library:CreateWindow(WindowInfo)
             if not Visible and Library.ActiveTab == Tab then
                 Tab:Hide()
             end
+        end
+
+        function Tab:SetOrder(NewOrder: number)
+            Order = NewOrder
+            TabButton.LayoutOrder = Order
         end
 
         function Tab:SetTooltip(Text: string?)
@@ -16560,13 +17439,46 @@ function Library:CreateWindow(WindowInfo)
             end
         end
 
-        --// Execution \\--
-        if typeof(Tooltip) == "string" then
-            Tab.TooltipTable = Library:AddTooltip(Tooltip, nil, TabButton)
+        function Tab:Destroy()
+            Tab.Destroyed = true
+            StopLive()
+
+            for _, Connection in Tab.Connections do
+                Connection:Disconnect()
+            end
+
+            if Tab.TooltipTable then
+                Tab.TooltipTable:Destroy()
+                Tab.TooltipTable = nil
+            end
+
+            if Library.ActiveTab == Tab then
+                Tab:Hide()
+            end
+
+            if TabContainer then
+                TabContainer:Destroy()
+            end
+
+            if TabButton then
+                for Index, Entry in Library.TabButtons do
+                    if typeof(Entry) == "table" and Entry.Button == TabButton then
+                        table.remove(Library.TabButtons, Index)
+                        break
+                    end
+                end
+
+                TabButton:Destroy()
+            end
+
+            Library.Tabs[Tab.Key or Name] = nil
+            if Library.HomeTab == Tab then
+                Library.HomeTab = nil
+            end
         end
 
-        if not Library.ActiveTab then
-            Tab:Show()
+        if typeof(Tooltip) == "string" then
+            Tab.TooltipTable = Library:AddTooltip(Tooltip, nil, TabButton)
         end
 
         TabButton.MouseEnter:Connect(function()
@@ -16575,12 +17487,22 @@ function Library:CreateWindow(WindowInfo)
         TabButton.MouseLeave:Connect(function()
             Tab:Hover(false)
         end)
-        TabButton.MouseButton1Click:Connect(Tab.Show)
+        TabButton.MouseButton1Click:Connect(function()
+            Tab:Show()
+        end)
 
         Tab.Container = TabContainer
-        setmetatable(Tab, BaseGroupbox)
 
-        Library.Tabs[Name] = Tab
+        --// Keyed apart from the script's own tabs: a script is free to have a tab called
+        --// "Home" too, and neither should stand on the other
+        local TabKey = Info.Key or "__Home"
+        Tab.Key = TabKey
+        Library.Tabs[TabKey] = Tab
+        Library.HomeTab = Tab
+
+        if Info.AutoShow ~= false then
+            Tab:Show()
+        end
 
         return Tab
     end
@@ -18317,7 +19239,7 @@ function Library:CreateWindow(WindowInfo)
             BackgroundColor3 = IslandColor,
             BackgroundTransparency = 1,
             ClipsDescendants = true,
-            Position = UDim2.new(0.5, 0, 0, 12),
+            Position = UDim2.new(0.5, 0, 0, 4),
             Size = SeedSize,
             Text = "",
             Visible = false,
@@ -18336,32 +19258,200 @@ function Library:CreateWindow(WindowInfo)
         })
         table.insert(Library.Scales, New("UIScale", { Parent = Island }))
 
-        local function MakeIslandLabel(Text: string, Color: Color3)
+        --// Layout, following the reference: the window name on the left, a small dot,
+        --// then one live stat on the right that rotates between FPS and ping
+        local StatWidth = 72
+        local StatRise = 14
+
+        local IslandRow = New("Frame", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            AutomaticSize = Enum.AutomaticSize.X,
+            BackgroundTransparency = 1,
+            Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.fromOffset(0, 18),
+            ZIndex = 51,
+            Parent = Island,
+        })
+        New("UIListLayout", {
+            FillDirection = Enum.FillDirection.Horizontal,
+            HorizontalAlignment = Enum.HorizontalAlignment.Center,
+            Padding = UDim.new(0, 10),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            VerticalAlignment = Enum.VerticalAlignment.Center,
+            Parent = IslandRow,
+        })
+
+        local IslandTitle = New("TextLabel", {
+            AutomaticSize = Enum.AutomaticSize.X,
+            BackgroundTransparency = 1,
+            FontFace = "FontBold",
+            LayoutOrder = 1,
+            Size = UDim2.fromOffset(0, 18),
+            Text = WindowInfo.Title or "",
+            TextColor3 = IslandText,
+            TextSize = 15,
+            TextTransparency = 1,
+            ZIndex = 51,
+            Parent = IslandRow,
+        })
+
+        --// Plain separator between the name and the stat, not a status indicator
+        local IslandDot = New("Frame", {
+            BackgroundColor3 = IslandMuted,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            LayoutOrder = 2,
+            Size = UDim2.fromOffset(3, 3),
+            ZIndex = 51,
+            Parent = IslandRow,
+        })
+        New("UICorner", {
+            CornerRadius = UDim.new(1, 0),
+            Parent = IslandDot,
+        })
+
+        --// Two stacked labels so one reading can leave while the next arrives
+        local StatHolder = New("Frame", {
+            BackgroundTransparency = 1,
+            ClipsDescendants = true,
+            LayoutOrder = 3,
+            Size = UDim2.fromOffset(StatWidth, 18),
+            ZIndex = 51,
+            Parent = IslandRow,
+        })
+
+        local function MakeStatLabel()
             return New("TextLabel", {
-                AnchorPoint = Vector2.new(0.5, 0.5),
+                AnchorPoint = Vector2.new(0, 0.5),
                 BackgroundTransparency = 1,
                 FontFace = "FontBold",
-                Position = UDim2.fromScale(0.5, 0.5),
+                Position = UDim2.fromScale(0, 0.5),
                 Size = UDim2.fromScale(1, 1),
-                Text = Text,
-                TextColor3 = Color,
+                Text = "",
+                TextColor3 = IslandMuted,
                 TextSize = 15,
                 TextTransparency = 1,
-                TextTruncate = Enum.TextTruncate.AtEnd,
+                TextXAlignment = Enum.TextXAlignment.Left,
                 ZIndex = 51,
-                Parent = Island,
+                Parent = StatHolder,
             })
         end
-        local IslandTitle = MakeIslandLabel(WindowInfo.Title or "", IslandText)
-        local IslandHint = MakeIslandLabel(if Library.IsMobile then "Tap to open" else "Click to open", IslandMuted)
-        IslandHint.Position = UDim2.new(0.5, 0, 0.5, 10)
+
+        local StatFront, StatBack = MakeStatLabel(), MakeStatLabel()
+
+        local IslandHint = New("TextLabel", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            BackgroundTransparency = 1,
+            FontFace = "FontBold",
+            Position = UDim2.new(0.5, 0, 0.5, 10),
+            Size = UDim2.fromScale(1, 1),
+            Text = if Library.IsMobile then "Tap to open" else "Click to open",
+            TextColor3 = IslandMuted,
+            TextSize = 15,
+            TextTransparency = 1,
+            ZIndex = 51,
+            Parent = Island,
+        })
 
         local Minimized = false
         local Hovering = false
 
+        --// Live readings: FPS is measured here, ping comes from Stats when the
+        --// executor exposes it
+        local StatConnection, RotateThread
+        local StatIndex = 1
+        local FrameTime = 1 / 60
+
+        local function ReadFPS(): string
+            return string.format("%d FPS", math.clamp(math.round(1 / math.max(FrameTime, 1e-4)), 0, 999))
+        end
+
+        local function ReadPing(): string
+            local Ok, Value = pcall(function()
+                --// Looked up by name: the Network tree is not part of the Stats type
+                local Network = game:GetService("Stats"):FindFirstChild("Network")
+                local Items = Network and Network:FindFirstChild("ServerStatsItem")
+                local Ping = Items and Items:FindFirstChild("Data Ping")
+                return Ping and (Ping :: any):GetValue()
+            end)
+
+            if not Ok or typeof(Value) ~= "number" then
+                return "-- ms"
+            end
+
+            return string.format("%d ms", math.clamp(math.round(Value), 0, 9999))
+        end
+
+        local StatReaders = { ReadFPS, ReadPing }
+
+        local function CurrentStatText(): string
+            return StatReaders[StatIndex]()
+        end
+
+        --// The swap: the old reading lifts away while the new one rises into its place
+        local function SwapStat()
+            StatIndex = if StatIndex >= #StatReaders then 1 else StatIndex + 1
+
+            StatBack.Text = CurrentStatText()
+            StatBack.Position = UDim2.new(0, 0, 0.5, StatRise)
+            StatBack.TextTransparency = 1
+
+            TweenService:Create(StatFront, IslandFade, {
+                Position = UDim2.new(0, 0, 0.5, -StatRise),
+                TextTransparency = 1,
+            }):Play()
+            TweenService:Create(StatBack, IslandGlide, {
+                Position = UDim2.fromScale(0, 0.5),
+                TextTransparency = if Hovering then 1 else 0,
+            }):Play()
+
+            StatFront, StatBack = StatBack, StatFront
+        end
+
+        --// Only runs while the island is up
+        local function StartStats()
+            StatFront.Text = CurrentStatText()
+            StatFront.Position = UDim2.fromScale(0, 0.5)
+            StatBack.Text = ""
+
+            if not StatConnection then
+                StatConnection = RunService.RenderStepped:Connect(function(DeltaTime: number)
+                    --// Smoothed so the number does not jitter every frame
+                    FrameTime += (DeltaTime - FrameTime) * 0.1
+
+                    if not Hovering then
+                        StatFront.Text = CurrentStatText()
+                    end
+                end)
+            end
+
+            if not RotateThread then
+                RotateThread = task.spawn(function()
+                    while Minimized do
+                        task.wait(3)
+                        if not Minimized then
+                            break
+                        end
+
+                        SwapStat()
+                    end
+
+                    RotateThread = nil
+                end)
+            end
+        end
+
+        local function StopStats()
+            if StatConnection then
+                StatConnection:Disconnect()
+                StatConnection = nil
+            end
+        end
+
         local function TargetSize()
             local TitleWidth = TextService:GetTextSize(IslandTitle.Text, 15, Enum.Font.GothamBold, Vector2.new(1000, 100)).X
-            local Width = math.clamp(TitleWidth + 56, 150, 320)
+            --// name + gap + dot + gap + stat, inside the pill's own padding
+            local Width = math.clamp(TitleWidth + 23 + StatWidth + 40, 170, 360)
             if Hovering then
                 return UDim2.fromOffset(Width + HoverPad, HoverHeight)
             end
@@ -18371,8 +19461,16 @@ function Library:CreateWindow(WindowInfo)
         local function RefreshIsland()
             TweenService:Create(Island, IslandGlide, { Size = TargetSize() }):Play()
             TweenService:Create(IslandStroke, IslandFade, { Transparency = if Hovering then 0.7 else 0.82 }):Play()
-            TweenService:Create(IslandTitle, IslandFade, {
+            TweenService:Create(IslandRow, IslandFade, {
                 Position = UDim2.new(0.5, 0, 0.5, if Hovering then -10 else 0),
+            }):Play()
+            TweenService:Create(IslandTitle, IslandFade, {
+                TextTransparency = if Hovering then 1 else 0,
+            }):Play()
+            TweenService:Create(IslandDot, IslandFade, {
+                BackgroundTransparency = if Hovering then 1 else 0.2,
+            }):Play()
+            TweenService:Create(StatFront, IslandFade, {
                 TextTransparency = if Hovering then 1 else 0,
             }):Play()
             TweenService:Create(IslandHint, IslandFade, {
@@ -18387,18 +19485,29 @@ function Library:CreateWindow(WindowInfo)
             Island.BackgroundTransparency = 1
             IslandStroke.Transparency = 1
             IslandTitle.TextTransparency = 1
+            IslandDot.BackgroundTransparency = 1
+            StatFront.TextTransparency = 1
+            StatBack.TextTransparency = 1
             IslandHint.TextTransparency = 1
             Island.Visible = true
+
+            StartStats()
 
             TweenService:Create(Island, IslandGlide, { BackgroundTransparency = 0 }):Play()
             RefreshIsland()
         end
 
         local function HideIsland()
+            StopStats()
+
             if not Island.Visible then
                 return
             end
+
             TweenService:Create(IslandTitle, IslandOut, { TextTransparency = 1 }):Play()
+            TweenService:Create(IslandDot, IslandOut, { BackgroundTransparency = 1 }):Play()
+            TweenService:Create(StatFront, IslandOut, { TextTransparency = 1 }):Play()
+            TweenService:Create(StatBack, IslandOut, { TextTransparency = 1 }):Play()
             TweenService:Create(IslandHint, IslandOut, { TextTransparency = 1 }):Play()
             TweenService:Create(IslandStroke, IslandOut, { Transparency = 1 }):Play()
             local Tween = TweenService:Create(Island, IslandOut, {
@@ -18530,6 +19639,35 @@ function Library:CreateWindow(WindowInfo)
 
     Window.MainFrame = MainFrame
     Library.Window = Window
+
+    --// Baked-in Home tab: every window gets one, above all tabs and categories, with no
+    --// call needed from the script. Pass Home = false to leave it out.
+    do
+        local Config = WindowInfo.Home
+        if typeof(Config) ~= "table" then
+            Config = {}
+        end
+
+        if WindowInfo.Home ~= false and Config.Enabled ~= false then
+            local DiscordConfig = WindowInfo.Discord
+            if typeof(DiscordConfig) == "string" then
+                DiscordConfig = { Invite = DiscordConfig }
+            elseif typeof(DiscordConfig) ~= "table" then
+                DiscordConfig = {}
+            end
+
+            local Info = {}
+            for Key, Value in Config do
+                Info[Key] = Value
+            end
+
+            --// The links default to whatever the Discord tab is already pointed at
+            Info.Invite = Info.Invite or DiscordConfig.Invite
+            Info.Enabled = nil
+
+            Window.Home = Window:AddHomeTab(Info)
+        end
+    end
 
     --// Baked-in Discord tab: every window gets one unless it is turned off \\--
     do
@@ -19375,6 +20513,14 @@ function Library:Unload()
     Library.KeybindMenu = nil
 
     getgenv().Library = nil
+end
+
+--// How many times this executor has loaded the library this session; the Home tab
+--// shows it as "Execs"
+do
+    local Shared = getgenv()
+    Shared.__AlexandriaExecs = (tonumber(Shared.__AlexandriaExecs) or 0) + 1
+    Library.ExecCount = Shared.__AlexandriaExecs
 end
 
 getgenv().Library = Library

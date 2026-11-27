@@ -51,7 +51,6 @@ local Tabs = {
 	Pickers = Main:AddTab("Pickers", "list"),
 	Layout = Main:AddTab("Layout", "layout-panel-left"),
 	Settings = Misc:AddTab("Settings", "settings"),
-	Key = Window:AddKeyTab("Key System"), -- tabs added straight to the Window sit outside any category
 }
 
 -- Sub-tabs sit in a strip above the content while their parent is open
@@ -412,29 +411,6 @@ Header:AddInput("TitleText", {
 })
 
 --============================================================================--
---// Key System
---============================================================================--
-
-Tabs.Key:AddKeyBox({
-	Title = "Alexandria",
-	Subtitle = "Feature tour",
-	Text = "Enter your key to continue. (Hint: Alexandria)",
-	Placeholder = "your key...",
-	ExpectedKey = "Alexandria", -- or Validate = function(Key) return Ok, Message end
-	GetKey = "https://example.com/getkey", -- string copies the link, function runs
-	Premium = function()
-		Library:Notify({ Title = "Premium", Description = "Not for sale.", Time = 3 })
-	end,
-	Footer = "your key is saved on this device after it checks out.",
-	SaveKey = "Alexandria/key.txt",
-	Callback = function(Success, Key)
-		if Success then
-			Library:Notify({ Title = "Key accepted", Description = "Welcome in.", Time = 3 })
-		end
-	end,
-})
-
---============================================================================--
 --// Settings: menu, theming, configs
 --============================================================================--
 
@@ -479,14 +455,6 @@ MenuGroup:AddDropdown("NotificationSide", {
 	Default = "Right",
 	Callback = function(Value)
 		Library:SetNotifySide(Value)
-	end,
-})
-MenuGroup:AddDropdown("DPIDropdown", {
-	Text = "DPI Scale",
-	Values = { "50%", "75%", "100%", "125%", "150%", "175%", "200%" },
-	Default = "100%",
-	Callback = function(Value)
-		Library:SetDPIScale(tonumber((Value:gsub("%%", ""))))
 	end,
 })
 MenuGroup:AddSlider("UICornerSlider", {
