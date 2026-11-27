@@ -16901,21 +16901,29 @@ function Library:CreateWindow(WindowInfo)
         })
         Corner(GameIcon, math.max(Library.CornerRadius - 2, 4))
 
-        --// rbxthumb GameIcon is keyed by the universe id (game.GameId), not the place id
+        --// rbxthumb GameIcon is keyed by the universe id (game.GameId), not the place id.
+        --// Don't gate on ImageLabel.IsLoaded: Roblox leaves IsLoaded false while ImageTransparency == 1.
         local function TryGameIcon(Url: string): boolean
             if not GameIcon.Parent then
                 return false
             end
 
-            GameIcon.Image = Url
-            pcall(function()
-                cloneref(game:GetService("ContentProvider")):PreloadAsync({ GameIcon })
+            local Status = nil
+            local Ok = pcall(function()
+                cloneref(game:GetService("ContentProvider")):PreloadAsync({ Url }, function(_, FetchStatus)
+                    Status = FetchStatus
+                end)
             end)
 
-            if not (GameIcon.Parent and GameIcon.IsLoaded) then
+            if not GameIcon.Parent then
                 return false
             end
 
+            if Ok and Status == Enum.AssetFetchStatus.Failure then
+                return false
+            end
+
+            GameIcon.Image = Url
             TweenService:Create(GameIcon, Library.GlideTweenInfo, {
                 ImageTransparency = 0,
             }):Play()
@@ -17428,8 +17436,9 @@ function Library:CreateWindow(WindowInfo)
 
         --// Place details come in late, so they are filled when they arrive
         task.spawn(function()
+            local IconLoaded = false
             if game.GameId and game.GameId > 0 then
-                TryGameIcon(string.format("rbxthumb://type=GameIcon&id=%d&w=150&h=150", game.GameId))
+                IconLoaded = TryGameIcon(string.format("rbxthumb://type=GameIcon&id=%d&w=150&h=150", game.GameId))
             end
 
             local Ok, Product = pcall(function()
@@ -17437,15 +17446,22 @@ function Library:CreateWindow(WindowInfo)
             end)
 
             if not (Ok and typeof(Product) == "table") then
+                if not IconLoaded and game.PlaceId and game.PlaceId > 0 then
+                    TryGameIcon(string.format("rbxthumb://type=Asset&id=%d&w=150&h=150", game.PlaceId))
+                end
                 GameName.Text = "This place"
                 return
             end
 
-            --// Fallback: the place's own icon asset, for a universe thumbnail that
-            --// never resolved
-            local IconAsset = tonumber(Product.IconImageAssetId) or 0
-            if IconAsset > 0 and GameIcon.Parent and not GameIcon.IsLoaded then
-                TryGameIcon(string.format("rbxassetid://%d", IconAsset))
+            --// Fallback: the place's own icon asset, then place thumbnail
+            if not IconLoaded and GameIcon.Parent then
+                local IconAsset = tonumber(Product.IconImageAssetId) or 0
+                if IconAsset > 0 then
+                    IconLoaded = TryGameIcon(string.format("rbxassetid://%d", IconAsset))
+                end
+                if not IconLoaded and game.PlaceId and game.PlaceId > 0 then
+                    TryGameIcon(string.format("rbxthumb://type=Asset&id=%d&w=150&h=150", game.PlaceId))
+                end
             end
 
             if GameName.Parent then
