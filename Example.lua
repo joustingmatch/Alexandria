@@ -288,6 +288,23 @@ Lists:AddButton("Go To Waypoint", function()
 	Library:Notify(Waypoint and ("Going to " .. Waypoint) or "Pick a waypoint first", 3)
 end)
 
+local Priority = Tabs.Pickers:AddGroupbox({
+	Side = "Left",
+	Name = "Priority List",
+	IconName = "list-ordered",
+	Description = "Drag rows (or use the arrows) to set priority order.",
+})
+
+Priority:AddPriorityList("TaskOrder", {
+	Text = "Task Order",
+	Description = "Top task runs first",
+	Values = { "Collect", "Upgrade", "Sell", "Claim Rewards" },
+	MaxRows = 6,
+	Callback = function(Order)
+		print("Task order:", table.concat(Order, " > "))
+	end,
+})
+
 local Colors = Tabs.Pickers:AddGroupbox({
 	Side = "Right",
 	Name = "Colors",

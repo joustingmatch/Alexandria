@@ -149,6 +149,19 @@ local ElementParser = {}; do
     )
 
     CreateParser(
+        "PriorityList", "Options",
+        function(Index: string, PriorityList: any)
+            return { value = if typeof(PriorityList.Value) == "table" then table.clone(PriorityList.Value) else {} }
+        end,
+        function(Element: any?, Data: any)
+            if not Element then return end
+            if typeof(Data.value) ~= "table" then return end
+
+            Element:SetValue(Data.value)
+        end
+    )
+
+    CreateParser(
         "ColorPicker", "Options",
         function(Index: string, ColorPicker: any)
             return { value = ColorPicker.Value:ToHex(), transparency = ColorPicker.Transparency }

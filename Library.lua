@@ -632,6 +632,19 @@ local Templates = {
         Disabled = false,
         Visible = true,
     },
+    PriorityList = {
+        Values = {},
+        MaxRows = 6,
+        Numbered = true,
+        Arrows = true,
+        Placeholder = "Nothing to order",
+
+        Callback = function() end,
+        Changed = function() end,
+
+        Disabled = false,
+        Visible = true,
+    },
     Viewport = {
         Object = nil,
         Camera = nil,
@@ -10804,6 +10817,786 @@ do
 
         return ListBox
     end
+
+    --// Always-open reorderable priority list: drag a row (by its grip on touch) or use the
+    --// up/down arrows to set priority order. Value is the ordered array of items.
+    function Funcs:AddPriorityList(Idx, Info)
+        if self.Destroyed then return nil end
+
+        if typeof(Info) == "table" then
+            if Info.Values == nil and typeof(Info.Items) == "table" then
+                Info.Values = Info.Items
+            end
+            if Info.Placeholder == nil and typeof(Info.EmptyText) == "string" then
+                Info.Placeholder = Info.EmptyText
+            end
+        end
+
+        Info = Library:Validate(Info, Templates.PriorityList)
+
+        local Groupbox = self
+        local Container = Groupbox.Container
+
+        local PriorityList = {
+            Connections = {},
+            Destroyed = false,
+
+            Text = Info.Text,
+            Description = Info.Description,
+            Values = {},
+            Value = {},
+            MaxRows = math.max(tonumber(Info.MaxRows) or 6, 1),
+            Numbered = Info.Numbered ~= false,
+            Arrows = Info.Arrows ~= false,
+            Placeholder = Info.Placeholder,
+
+            Tooltip = Info.Tooltip,
+            DisabledTooltip = Info.DisabledTooltip,
+            TooltipTable = nil,
+
+            Callback = Info.Callback,
+            Changed = Info.Changed,
+            FormatListValue = Info.FormatListValue,
+
+            Dragging = false,
+            Disabled = Info.Disabled,
+            Visible = Info.Visible,
+
+            Type = "PriorityList",
+        }
+
+        local RowHeight = 26
+        local RowGap = 3
+        local RowPitch = RowHeight + RowGap
+        local BoxPad = 4
+        local SlideTweenInfo = TweenInfo.new(0.16, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+
+        local HasText = Info.Text ~= nil and Info.Text ~= ""
+        local HasDesc = typeof(Info.Description) == "string" and Info.Description ~= ""
+        local HeaderHeight = (if HasText then 16 else 0) + (if HasDesc then 14 else 0) + (if HasText or HasDesc then 4 else 0)
+
+        local Holder = New("Frame", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, HeaderHeight + RowHeight + BoxPad * 2),
+            Visible = PriorityList.Visible,
+            Parent = Container,
+        })
+
+        local Label = New("TextLabel", {
+            BackgroundTransparency = 1,
+            FontFace = "FontMedium",
+            Position = UDim2.fromOffset(0, 0),
+            Size = UDim2.new(1, 0, 0, 14),
+            Text = Info.Text or "",
+            TextSize = 13,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Visible = HasText,
+            Parent = Holder,
+        })
+
+        local DescLabel = New("TextLabel", {
+            BackgroundTransparency = 1,
+            FontFace = "Font",
+            Position = UDim2.fromOffset(0, if HasText then 15 else 0),
+            Size = UDim2.new(1, 0, 0, 13),
+            Text = Info.Description or "",
+            TextColor3 = "MutedFontColor",
+            TextSize = 11,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Visible = HasDesc,
+            Parent = Holder,
+        })
+
+        local Box = New("ScrollingFrame", {
+            AnchorPoint = Vector2.new(0, 1),
+            BackgroundColor3 = "MainColor",
+            CanvasSize = UDim2.fromOffset(0, 0),
+            ClipsDescendants = true,
+            Position = UDim2.fromScale(0, 1),
+            ScrollBarImageColor3 = "FontColor",
+            ScrollBarImageTransparency = 0.6,
+            ScrollBarThickness = 2,
+            ScrollingDirection = Enum.ScrollingDirection.Y,
+            Size = UDim2.new(1, 0, 0, RowHeight + BoxPad * 2),
+            Parent = Holder,
+        })
+        New("UIStroke", {
+            Color = "OutlineColor",
+            Parent = Box,
+        })
+        table.insert(
+            Library.Corners,
+            New("UICorner", {
+                CornerRadius = UDim.new(0, Library.CornerRadius / 2),
+                Parent = Box,
+            })
+        )
+
+        local ItemsFrame = New("Frame", {
+            BackgroundTransparency = 1,
+            Position = UDim2.fromOffset(BoxPad, BoxPad),
+            Size = UDim2.new(1, -(BoxPad * 2 + 2), 0, RowHeight),
+            Parent = Box,
+        })
+
+        local EmptyLabel = New("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, RowHeight),
+            Text = PriorityList.Placeholder,
+            TextColor3 = "MutedFontColor",
+            TextSize = 12,
+            Visible = false,
+            Parent = ItemsFrame,
+        })
+
+        if typeof(Info.Tooltip) == "string" or typeof(Info.DisabledTooltip) == "string" then
+            PriorityList.TooltipTable = Library:AddTooltip(Info.Tooltip, Info.DisabledTooltip, Holder)
+        end
+
+        --// Rows are positioned explicitly so non-dragged rows slide smoothly out of the way
+        local Rows = {}
+        local RowConnections = {}
+        local PendingOrder: { any } = {}
+        local ActiveDragRow = nil
+
+        local function CloneList(List: { any }): { any }
+            local Copy = table.create(#List)
+            for Index, Item in List do
+                Copy[Index] = Item
+            end
+            return Copy
+        end
+
+        local function ListsEqual(A: { any }, B: { any }): boolean
+            if #A ~= #B then
+                return false
+            end
+            for Index = 1, #A do
+                if A[Index] ~= B[Index] then
+                    return false
+                end
+            end
+            return true
+        end
+
+        local function UpdateBoxHeight()
+            local Count = #Rows
+            local VisibleRows = math.clamp(Count, 1, PriorityList.MaxRows)
+            local VisibleHeight = VisibleRows * RowPitch - RowGap + BoxPad * 2
+            local ContentHeight = math.max(Count, 1) * RowPitch - RowGap
+
+            Box.Size = UDim2.new(1, 0, 0, VisibleHeight)
+            Box.CanvasSize = UDim2.fromOffset(0, ContentHeight + BoxPad * 2)
+            ItemsFrame.Size = UDim2.new(1, -(BoxPad * 2 + (if Count > PriorityList.MaxRows then 4 else 0)), 0, ContentHeight)
+            Holder.Size = UDim2.new(1, 0, 0, HeaderHeight + VisibleHeight)
+            Groupbox:Resize()
+        end
+
+        local function StyleRow(Row, Hovered: boolean?, Dragging: boolean?)
+            if not Row or not Row.Frame or not Row.Frame.Parent then
+                return
+            end
+
+            local Disabled = PriorityList.Disabled == true
+            local BgColor = if Dragging
+                then GetSchemeValue("HoverColor")
+                elseif Hovered and not Disabled then Library:GetBetterColor(Library.Scheme.BackgroundColor, 6)
+                else Library.Scheme.BackgroundColor
+            local StrokeColor = if Dragging
+                then Library.Scheme.AccentColor
+                elseif Hovered and not Disabled then Library:GetLighterColor(Library.Scheme.OutlineColor)
+                else Library.Scheme.OutlineColor
+            local StrokeAlpha = if Dragging then 0 elseif Hovered and not Disabled then 0.2 else 0.45
+
+            TweenService:Create(Row.Frame, Library.HoverTweenInfo, {
+                BackgroundColor3 = BgColor,
+            }):Play()
+            TweenService:Create(Row.Stroke, Library.HoverTweenInfo, {
+                Color = StrokeColor,
+                Transparency = StrokeAlpha,
+            }):Play()
+
+            Row.NameLabel.TextTransparency = if Disabled then 0.7 else 0
+            if Row.RankLabel then
+                Row.RankLabel.TextTransparency = if Disabled then 0.75 else 0.15
+            end
+            if Row.GripIcon then
+                SetIconProperties(Row.GripIcon, {
+                    ImageTransparency = if Disabled then 0.8 elseif Dragging then 0 elseif Hovered then 0.15 else 0.45,
+                })
+            end
+        end
+
+        local function SyncRowRanksAndArrows()
+            local Count = #Rows
+            for Index, Row in Rows do
+                Row.Index = Index
+                if Row.RankLabel then
+                    Row.RankLabel.Text = tostring(Index)
+                end
+                if Row.UpIcon then
+                    local CanUp = not PriorityList.Disabled and Index > 1
+                    SetIconProperties(Row.UpIcon, {
+                        ImageTransparency = if CanUp then 0.2 else 0.78,
+                    })
+                end
+                if Row.DownIcon then
+                    local CanDown = not PriorityList.Disabled and Index < Count
+                    SetIconProperties(Row.DownIcon, {
+                        ImageTransparency = if CanDown then 0.2 else 0.78,
+                    })
+                end
+            end
+        end
+
+        local function LayoutRows(Animate: boolean?, SkipRow: any?)
+            for Index, Row in Rows do
+                if Row == SkipRow then
+                    continue
+                end
+
+                local TargetPos = UDim2.fromOffset(0, (Index - 1) * RowPitch)
+                StopTween(Row.SlideTween, true)
+                Row.SlideTween = nil
+
+                if Animate then
+                    local Tween = TweenService:Create(Row.Frame, SlideTweenInfo, { Position = TargetPos })
+                    Row.SlideTween = Tween
+                    Tween:Play()
+                else
+                    Row.Frame.Position = TargetPos
+                end
+            end
+            SyncRowRanksAndArrows()
+        end
+
+        local function SyncValueFromRows()
+            local Ordered = table.create(#Rows)
+            for Index, Row in Rows do
+                Ordered[Index] = Row.Value
+            end
+            PriorityList.Value = Ordered
+            PriorityList.Values = CloneList(Ordered)
+        end
+
+        local function MoveRow(FromIndex: number, ToIndex: number, Animate: boolean?, SkipRow: any?)
+            if FromIndex == ToIndex or FromIndex < 1 or FromIndex > #Rows or ToIndex < 1 or ToIndex > #Rows then
+                return false
+            end
+
+            local Row = table.remove(Rows, FromIndex)
+            table.insert(Rows, ToIndex, Row)
+            SyncValueFromRows()
+            LayoutRows(Animate, SkipRow)
+            return true
+        end
+
+        local function MergeOrder(TargetOrder: { any }, Items: { any }): { any }
+            local Available = {}
+            for _, Item in Items do
+                Available[Item] = (Available[Item] or 0) + 1
+            end
+
+            local Result = {}
+            local Missing = {}
+
+            for _, Item in TargetOrder do
+                if Available[Item] and Available[Item] > 0 then
+                    table.insert(Result, Item)
+                    Available[Item] -= 1
+                else
+                    table.insert(Missing, Item)
+                end
+            end
+
+            for _, Item in Items do
+                if Available[Item] and Available[Item] > 0 then
+                    table.insert(Result, Item)
+                    Available[Item] -= 1
+                end
+            end
+
+            PendingOrder = Missing
+            return Result
+        end
+
+        function PriorityList:Display()
+            if Library.Unloaded then
+                return
+            end
+
+            for _, Row in Rows do
+                StyleRow(Row, Row.Hovered, Row == ActiveDragRow)
+            end
+            SyncRowRanksAndArrows()
+        end
+
+        function PriorityList:UpdateColors()
+            PriorityList:Display()
+        end
+
+        function PriorityList:OnChanged(Func)
+            PriorityList.Changed = Func
+            return PriorityList
+        end
+
+        function PriorityList:RunChanged()
+            local Snapshot = CloneList(PriorityList.Value)
+            Library:SafeCallback(PriorityList.Callback, Snapshot)
+            Library:SafeCallback(PriorityList.Changed, Snapshot)
+        end
+
+        function PriorityList:Get(): { any }
+            return CloneList(PriorityList.Value)
+        end
+
+        local function BeginDrag(Row, Input: InputObject)
+            if PriorityList.Disabled or PriorityList.Destroyed or PriorityList.Dragging or #Rows <= 1 then
+                return
+            end
+
+            PriorityList.Dragging = true
+            ActiveDragRow = Row
+
+            local StartIndex = Row.Index
+            local IsTouch = Input.UserInputType == Enum.UserInputType.Touch
+            local StartPointerY = if IsTouch then Input.Position.Y else Mouse.Y
+            local GrabOffsetY = StartPointerY - Row.Frame.AbsolutePosition.Y
+
+            --// Keep the page and parent scrolling frames still while dragging a row
+            local LockedScrollers = {}
+            local function LockScroller(Scroller)
+                if Scroller and Scroller:IsA("ScrollingFrame") and Scroller.ScrollingEnabled then
+                    Scroller.ScrollingEnabled = false
+                    table.insert(LockedScrollers, Scroller)
+                end
+            end
+
+            LockScroller(Box)
+            if Library.ActiveTab and Library.ActiveTab.Sides then
+                for _, Side in Library.ActiveTab.Sides do
+                    LockScroller(Side)
+                end
+            end
+            if Library.ActiveLoading and Library.ActiveLoading.Sidebar then
+                LockScroller(Library.ActiveLoading.Sidebar.Container)
+            end
+            LockScroller(Container)
+
+            StopTween(Row.SlideTween, true)
+            Row.SlideTween = nil
+            Row.Frame.ZIndex = 10
+            StyleRow(Row, true, true)
+
+            local MaxY = math.max((#Rows - 1) * RowPitch, 0)
+            local EdgeZone = 24
+            local ScrollSpeed = 180
+
+            while IsDragInput(Input) and not PriorityList.Destroyed and not Library.Unloaded and not PriorityList.Disabled do
+                local DeltaTime = RunService.RenderStepped:Wait()
+                if not Row.Frame.Parent then
+                    break
+                end
+
+                local PointerY = if IsTouch then Input.Position.Y else Mouse.Y
+                local BoxTop = Box.AbsolutePosition.Y
+                local BoxBottom = BoxTop + Box.AbsoluteSize.Y
+
+                --// Auto-scroll when holding a dragged row near the top or bottom edge
+                if #Rows > PriorityList.MaxRows then
+                    local MaxCanvasY = math.max(Box.CanvasSize.Y.Offset - Box.AbsoluteSize.Y, 0)
+                    if PointerY < BoxTop + EdgeZone then
+                        local Factor = math.clamp((BoxTop + EdgeZone - PointerY) / EdgeZone, 0, 1)
+                        Box.CanvasPosition = Vector2.new(0, math.clamp(Box.CanvasPosition.Y - ScrollSpeed * Factor * DeltaTime, 0, MaxCanvasY))
+                    elseif PointerY > BoxBottom - EdgeZone then
+                        local Factor = math.clamp((PointerY - (BoxBottom - EdgeZone)) / EdgeZone, 0, 1)
+                        Box.CanvasPosition = Vector2.new(0, math.clamp(Box.CanvasPosition.Y + ScrollSpeed * Factor * DeltaTime, 0, MaxCanvasY))
+                    end
+                end
+
+                local LocalY = math.clamp(
+                    PointerY - BoxTop + Box.CanvasPosition.Y - BoxPad - GrabOffsetY,
+                    0,
+                    MaxY
+                )
+                Row.Frame.Position = UDim2.fromOffset(0, LocalY)
+
+                local TargetIndex = math.clamp(math.floor((LocalY + RowHeight * 0.5) / RowPitch) + 1, 1, #Rows)
+                if TargetIndex ~= Row.Index then
+                    MoveRow(Row.Index, TargetIndex, true, Row)
+                end
+            end
+
+            for _, Scroller in LockedScrollers do
+                if Scroller.Parent then
+                    Scroller.ScrollingEnabled = true
+                end
+            end
+
+            PriorityList.Dragging = false
+            ActiveDragRow = nil
+
+            if Row.Frame and Row.Frame.Parent then
+                Row.Frame.ZIndex = 1
+                LayoutRows(true)
+                StyleRow(Row, Row.Hovered, false)
+            end
+
+            if Row.Index ~= StartIndex and not PriorityList.Destroyed and not Library.Unloaded then
+                PriorityList:RunChanged()
+            end
+        end
+
+        local function ClearRows()
+            for _, Conn in RowConnections do
+                Conn:Disconnect()
+            end
+            table.clear(RowConnections)
+
+            for _, Row in Rows do
+                StopTween(Row.SlideTween, true)
+                if Row.Frame then
+                    Row.Frame:Destroy()
+                end
+            end
+            table.clear(Rows)
+        end
+
+        local function BuildRows(OrderedValues: { any })
+            ClearRows()
+
+            local GripIconAsset = Library:GetIcon("grip-vertical")
+            local UpIconAsset = Library:GetIcon("chevron-up")
+            local DownIconAsset = Library:GetIcon("chevron-down")
+
+            for Index, Value in OrderedValues do
+                local DisplayText = tostring(Value)
+                if typeof(PriorityList.FormatListValue) == "function" then
+                    DisplayText = tostring(PriorityList.FormatListValue(Value))
+                end
+
+                local Frame = New("Frame", {
+                    BackgroundColor3 = "BackgroundColor",
+                    Position = UDim2.fromOffset(0, (Index - 1) * RowPitch),
+                    Size = UDim2.new(1, 0, 0, RowHeight),
+                    ZIndex = 1,
+                    Parent = ItemsFrame,
+                })
+                local Stroke = New("UIStroke", {
+                    ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+                    Color = "OutlineColor",
+                    Transparency = 0.45,
+                    Parent = Frame,
+                })
+                table.insert(
+                    Library.Corners,
+                    New("UICorner", {
+                        CornerRadius = UDim.new(0, math.max(Library.CornerRadius / 2, 3)),
+                        Parent = Frame,
+                    })
+                )
+
+                --// Left grip handle: on touch devices only this starts a drag so swipes still scroll
+                local GripHit = New("TextButton", {
+                    AutoButtonColor = false,
+                    BackgroundTransparency = 1,
+                    Position = UDim2.fromOffset(2, 0),
+                    Size = UDim2.fromOffset(20, RowHeight),
+                    Text = "",
+                    ZIndex = 2,
+                    Parent = Frame,
+                })
+                local GripIcon = Library:CreateIcon(GripIconAsset, {
+                    AnchorPoint = Vector2.new(0.5, 0.5),
+                    BackgroundTransparency = 1,
+                    ImageColor3 = "MutedFontColor",
+                    ImageTransparency = 0.45,
+                    Position = UDim2.fromScale(0.5, 0.5),
+                    Size = UDim2.fromOffset(12, 12),
+                    ZIndex = 2,
+                    Parent = GripHit,
+                })
+
+                local LeftX = 22
+                local RankLabel = nil
+                if PriorityList.Numbered then
+                    RankLabel = New("TextLabel", {
+                        BackgroundTransparency = 1,
+                        FontFace = "FontMedium",
+                        Position = UDim2.fromOffset(LeftX, 0),
+                        Size = UDim2.fromOffset(18, RowHeight),
+                        Text = tostring(Index),
+                        TextColor3 = "MutedFontColor",
+                        TextSize = 11,
+                        TextXAlignment = Enum.TextXAlignment.Center,
+                        ZIndex = 2,
+                        Parent = Frame,
+                    })
+                    LeftX += 20
+                end
+
+                local RightPad = if PriorityList.Arrows then 46 else 8
+                local NameLabel = New("TextLabel", {
+                    BackgroundTransparency = 1,
+                    FontFace = "Font",
+                    Position = UDim2.fromOffset(LeftX, 0),
+                    Size = UDim2.new(1, -(LeftX + RightPad), 1, 0),
+                    Text = DisplayText,
+                    TextColor3 = "FontColor",
+                    TextSize = 12,
+                    TextTruncate = Enum.TextTruncate.AtEnd,
+                    TextXAlignment = Enum.TextXAlignment.Left,
+                    ZIndex = 2,
+                    Parent = Frame,
+                })
+
+                local Row = {
+                    Frame = Frame,
+                    Stroke = Stroke,
+                    GripIcon = GripIcon,
+                    RankLabel = RankLabel,
+                    NameLabel = NameLabel,
+                    UpIcon = nil,
+                    DownIcon = nil,
+                    Value = Value,
+                    Index = Index,
+                    Hovered = false,
+                    SlideTween = nil,
+                }
+
+                --// Up / Down step buttons
+                if PriorityList.Arrows then
+                    local function MakeArrow(IconAsset, OffsetX, Delta)
+                        local Btn = New("TextButton", {
+                            AnchorPoint = Vector2.new(1, 0.5),
+                            AutoButtonColor = false,
+                            BackgroundColor3 = "HoverColor",
+                            BackgroundTransparency = 1,
+                            Position = UDim2.new(1, OffsetX, 0.5, 0),
+                            Size = UDim2.fromOffset(19, 19),
+                            Text = "",
+                            ZIndex = 3,
+                            Parent = Frame,
+                        })
+                        New("UICorner", {
+                            CornerRadius = UDim.new(0, 4),
+                            Parent = Btn,
+                        })
+                        local IconObj = Library:CreateIcon(IconAsset, {
+                            AnchorPoint = Vector2.new(0.5, 0.5),
+                            BackgroundTransparency = 1,
+                            ImageColor3 = "FontColor",
+                            ImageTransparency = 0.2,
+                            Position = UDim2.fromScale(0.5, 0.5),
+                            Size = UDim2.fromOffset(12, 12),
+                            ZIndex = 3,
+                            Parent = Btn,
+                        })
+
+                        table.insert(RowConnections, Btn.MouseEnter:Connect(function()
+                            if PriorityList.Disabled then return end
+                            if (Delta < 0 and Row.Index <= 1) or (Delta > 0 and Row.Index >= #Rows) then return end
+                            TweenService:Create(Btn, Library.HoverTweenInfo, { BackgroundTransparency = 0.4 }):Play()
+                        end))
+                        table.insert(RowConnections, Btn.MouseLeave:Connect(function()
+                            TweenService:Create(Btn, Library.HoverTweenInfo, { BackgroundTransparency = 1 }):Play()
+                        end))
+                        table.insert(RowConnections, Btn.MouseButton1Click:Connect(function()
+                            if PriorityList.Disabled or PriorityList.Dragging then return end
+                            if MoveRow(Row.Index, Row.Index + Delta, true) then
+                                PriorityList:RunChanged()
+                            end
+                        end))
+
+                        return IconObj
+                    end
+
+                    Row.UpIcon = MakeArrow(UpIconAsset, -24, -1)
+                    Row.DownIcon = MakeArrow(DownIconAsset, -4, 1)
+                end
+
+                --// Hover & drag bindings
+                table.insert(RowConnections, Frame.MouseEnter:Connect(function()
+                    Row.Hovered = true
+                    if not PriorityList.Dragging then
+                        StyleRow(Row, true, false)
+                    end
+                end))
+                table.insert(RowConnections, Frame.MouseLeave:Connect(function()
+                    Row.Hovered = false
+                    if not PriorityList.Dragging then
+                        StyleRow(Row, false, false)
+                    end
+                end))
+
+                --// Touch drags from grip only; mouse drags from anywhere on the row
+                table.insert(RowConnections, GripHit.InputBegan:Connect(function(Input: InputObject)
+                    if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+                        task.spawn(BeginDrag, Row, Input)
+                    end
+                end))
+                table.insert(RowConnections, Frame.InputBegan:Connect(function(Input: InputObject)
+                    if Input.UserInputType == Enum.UserInputType.MouseButton1 then
+                        if PriorityList.Arrows and Input.Position.X >= Frame.AbsolutePosition.X + Frame.AbsoluteSize.X - 46 then
+                            return
+                        end
+                        task.spawn(BeginDrag, Row, Input)
+                    end
+                end))
+
+                table.insert(Rows, Row)
+            end
+
+            EmptyLabel.Visible = #Rows == 0
+            SyncValueFromRows()
+            LayoutRows(false)
+            UpdateBoxHeight()
+            PriorityList:Display()
+        end
+
+        function PriorityList:SetValue(Order: { any }, SkipCallback: boolean?)
+            if typeof(Order) ~= "table" then
+                return
+            end
+
+            local Previous = CloneList(PriorityList.Value)
+            local Merged = MergeOrder(Order, PriorityList.Values)
+
+            --// Reorder existing Row objects in-place so we don't rebuild UI unnecessarily
+            local Pool = {}
+            for _, Row in Rows do
+                local Bucket = Pool[Row.Value]
+                if not Bucket then
+                    Bucket = {}
+                    Pool[Row.Value] = Bucket
+                end
+                table.insert(Bucket, Row)
+            end
+
+            local NewRows = table.create(#Merged)
+            for _, Item in Merged do
+                local Bucket = Pool[Item]
+                if Bucket and #Bucket > 0 then
+                    table.insert(NewRows, table.remove(Bucket, 1))
+                end
+            end
+
+            if #NewRows == #Rows then
+                Rows = NewRows
+                SyncValueFromRows()
+                LayoutRows(true)
+            else
+                BuildRows(Merged)
+            end
+
+            if not SkipCallback and not ListsEqual(Previous, PriorityList.Value) then
+                PriorityList:RunChanged()
+            end
+        end
+        PriorityList.Set = PriorityList.SetValue
+
+        function PriorityList:SetValues(Values: { any }, KeepOrder: boolean?, SkipCallback: boolean?)
+            local Previous = CloneList(PriorityList.Value)
+            local Incoming = if typeof(Values) == "table" then CloneList(Values) else {}
+
+            local Ordered
+            if KeepOrder == false then
+                PendingOrder = {}
+                Ordered = Incoming
+            else
+                local Preferred = CloneList(PriorityList.Value)
+                for _, Item in PendingOrder do
+                    table.insert(Preferred, Item)
+                end
+                Ordered = MergeOrder(Preferred, Incoming)
+            end
+
+            BuildRows(Ordered)
+
+            if not SkipCallback and not ListsEqual(Previous, PriorityList.Value) then
+                PriorityList:RunChanged()
+            end
+        end
+        PriorityList.Refresh = PriorityList.SetValues
+
+        function PriorityList:SetDisabled(Disabled: boolean)
+            PriorityList.Disabled = Disabled == true
+            Box.ScrollingEnabled = not PriorityList.Disabled
+            Label.TextTransparency = if PriorityList.Disabled then 0.8 else 0
+            DescLabel.TextTransparency = if PriorityList.Disabled then 0.8 else 0
+            if PriorityList.TooltipTable then
+                PriorityList.TooltipTable.Disabled = PriorityList.Disabled
+            end
+            PriorityList:Display()
+        end
+
+        function PriorityList:SetVisible(Visible: boolean)
+            PriorityList.Visible = Visible == true
+            Holder.Visible = PriorityList.Visible
+            Groupbox:Resize()
+        end
+
+        function PriorityList:SetText(Text: string)
+            PriorityList.Text = Text
+            Label.Text = Text or ""
+            Label.Visible = Text ~= nil and Text ~= ""
+        end
+
+        function PriorityList:SetTooltip(Tooltip: string?, DisabledTooltip: string?)
+            PriorityList.Tooltip = Tooltip
+            PriorityList.DisabledTooltip = DisabledTooltip
+            if PriorityList.TooltipTable then
+                PriorityList.TooltipTable:Destroy()
+                PriorityList.TooltipTable = nil
+            end
+            if typeof(Tooltip) == "string" or typeof(DisabledTooltip) == "string" then
+                PriorityList.TooltipTable = Library:AddTooltip(Tooltip, DisabledTooltip, Holder)
+                PriorityList.TooltipTable.Disabled = PriorityList.Disabled
+            end
+        end
+
+        function PriorityList:Destroy()
+            PriorityList.Destroyed = true
+            PriorityList.Dragging = false
+            ActiveDragRow = nil
+            ClearRows()
+
+            for _, Connection in PriorityList.Connections do
+                Connection:Disconnect()
+            end
+
+            if PriorityList.TooltipTable then
+                PriorityList.TooltipTable:Destroy()
+                PriorityList.TooltipTable = nil
+            end
+
+            if Holder then
+                Holder:Destroy()
+            end
+
+            local ElemIdx = table.find(Groupbox.Elements, PriorityList)
+            if ElemIdx then
+                table.remove(Groupbox.Elements, ElemIdx)
+            end
+
+            Groupbox:Resize()
+            Options[Idx] = nil
+        end
+
+        PriorityList:SetValues(Info.Values, false, true)
+        PriorityList:SetDisabled(PriorityList.Disabled)
+
+        PriorityList.Holder = Holder
+        table.insert(Groupbox.Elements, PriorityList)
+
+        PriorityList.Default = CloneList(PriorityList.Value)
+        Options[Idx] = PriorityList
+
+        return PriorityList
+    end
+
+    Funcs.AddOrderList = Funcs.AddPriorityList
 
     function Funcs:AddViewport(Idx, Info)
         if self.Destroyed then return nil end

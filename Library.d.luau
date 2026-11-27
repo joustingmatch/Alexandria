@@ -277,6 +277,25 @@ export type DropdownInfo = {
     Visible: boolean?,
 }
 
+export type PriorityListInfo = {
+    Text: string?,
+    Description: string?,
+    Values: { any }?,
+    Items: { any }?,
+    MaxRows: number?,
+    Numbered: boolean?,
+    Arrows: boolean?,
+    Placeholder: string?,
+    EmptyText: string?,
+    FormatListValue: ((any) -> string)?,
+    Tooltip: string?,
+    DisabledTooltip: string?,
+    Callback: (({ any }) -> ())?,
+    Changed: (({ any }) -> ())?,
+    Disabled: boolean?,
+    Visible: boolean?,
+}
+
 export type ViewportInfo = {
     Object: (BasePart | Model)?,
     Camera: Camera?,
@@ -841,6 +860,46 @@ export type Divider = {
     Destroy: (self: Divider) -> (),
 }
 
+export type PriorityList = {
+    Type: "PriorityList",
+    Text: string?,
+    Description: string?,
+    Values: { any },
+    Value: { any },
+    Default: { any },
+    MaxRows: number,
+    Numbered: boolean,
+    Arrows: boolean,
+    Placeholder: string,
+    Tooltip: string?,
+    DisabledTooltip: string?,
+    TooltipTable: Tooltip?,
+    Callback: (Order: { any }) -> (),
+    Changed: (Order: { any }) -> (),
+    FormatListValue: ((any) -> string)?,
+    Dragging: boolean,
+    Disabled: boolean,
+    Visible: boolean,
+    Destroyed: boolean,
+    Connections: { RBXScriptConnection },
+    Holder: Frame,
+
+    Display: (self: PriorityList) -> (),
+    UpdateColors: (self: PriorityList) -> (),
+    OnChanged: (self: PriorityList, Func: (Order: { any }) -> ()) -> PriorityList,
+    RunChanged: (self: PriorityList) -> (),
+    Get: (self: PriorityList) -> { any },
+    SetValue: (self: PriorityList, Order: { any }, SkipCallback: boolean?) -> (),
+    Set: (self: PriorityList, Order: { any }, SkipCallback: boolean?) -> (),
+    SetValues: (self: PriorityList, Values: { any }, KeepOrder: boolean?, SkipCallback: boolean?) -> (),
+    Refresh: (self: PriorityList, Values: { any }, KeepOrder: boolean?, SkipCallback: boolean?) -> (),
+    SetDisabled: (self: PriorityList, Disabled: boolean) -> (),
+    SetVisible: (self: PriorityList, Visible: boolean) -> (),
+    SetText: (self: PriorityList, Text: string) -> (),
+    SetTooltip: (self: PriorityList, Tooltip: string?, DisabledTooltip: string?) -> (),
+    Destroy: (self: PriorityList) -> (),
+}
+
 export type Element =
     Label
     | Button
@@ -848,6 +907,7 @@ export type Element =
     | Input
     | Slider
     | Dropdown
+    | PriorityList
     | Viewport
     | Image
     | Video
@@ -860,6 +920,7 @@ export type Option =
     | Input
     | Slider
     | Dropdown
+    | PriorityList
     | Viewport
     | Image
     | Video
@@ -890,6 +951,8 @@ export type BaseGroupbox = {
     AddInput: (self: BaseGroupbox, Idx: string, Info: InputInfo) -> Input,
     AddSlider: (self: BaseGroupbox, Idx: string, Info: SliderInfo) -> Slider,
     AddDropdown: (self: BaseGroupbox, Idx: string, Info: DropdownInfo) -> Dropdown,
+    AddPriorityList: (self: BaseGroupbox, Idx: string, Info: PriorityListInfo) -> PriorityList,
+    AddOrderList: (self: BaseGroupbox, Idx: string, Info: PriorityListInfo) -> PriorityList,
     AddViewport: (self: BaseGroupbox, Idx: string, Info: ViewportInfo) -> Viewport,
     AddImage: (self: BaseGroupbox, Idx: string, Info: ImageInfo) -> Image,
     AddVideo: (self: BaseGroupbox, Idx: string, Info: VideoInfo) -> Video,
