@@ -16840,11 +16840,33 @@ function Library:CreateWindow(WindowInfo)
 
         local GameIcon = New("ImageLabel", {
             BackgroundColor3 = "BackgroundColor",
-            Image = string.format("rbxthumb://type=GameIcon&id=%d&w=150&h=150", game.PlaceId),
+            ImageTransparency = 1,
             Size = UDim2.fromOffset(44, 44),
             Parent = GameCard,
         })
         Corner(GameIcon, math.max(Library.CornerRadius - 2, 4))
+
+        --// rbxthumb GameIcon is keyed by the universe id (game.GameId), not the place id
+        local function TryGameIcon(Url: string): boolean
+            if not GameIcon.Parent then
+                return false
+            end
+
+            GameIcon.Image = Url
+            pcall(function()
+                cloneref(game:GetService("ContentProvider")):PreloadAsync({ GameIcon })
+            end)
+
+            if not (GameIcon.Parent and GameIcon.IsLoaded) then
+                return false
+            end
+
+            TweenService:Create(GameIcon, Library.GlideTweenInfo, {
+                ImageTransparency = 0,
+            }):Play()
+
+            return true
+        end
 
         local GameName = New("TextLabel", {
             BackgroundTransparency = 1,
@@ -17318,6 +17340,10 @@ function Library:CreateWindow(WindowInfo)
 
         --// Place details come in late, so they are filled when they arrive
         task.spawn(function()
+            if game.GameId and game.GameId > 0 then
+                TryGameIcon(string.format("rbxthumb://type=GameIcon&id=%d&w=150&h=150", game.GameId))
+            end
+
             local Ok, Product = pcall(function()
                 return MarketplaceService:GetProductInfo(game.PlaceId)
             end)
@@ -17325,6 +17351,13 @@ function Library:CreateWindow(WindowInfo)
             if not (Ok and typeof(Product) == "table") then
                 GameName.Text = "This place"
                 return
+            end
+
+            --// Fallback: the place's own icon asset, for a universe thumbnail that
+            --// never resolved
+            local IconAsset = tonumber(Product.IconImageAssetId) or 0
+            if IconAsset > 0 and GameIcon.Parent and not GameIcon.IsLoaded then
+                TryGameIcon(string.format("rbxassetid://%d", IconAsset))
             end
 
             if GameName.Parent then
