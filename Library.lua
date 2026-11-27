@@ -315,7 +315,7 @@ local Library = {
         Icon = "message-circle",
         Description = "Our server",
 
-        Title = "Alexandria",
+        Title = "Ouroboros",
         Image = "129540701419485",
         Invite = "https://discord.gg/synapsex",
         Text = "Updates, support and new releases all land in the server first.",
