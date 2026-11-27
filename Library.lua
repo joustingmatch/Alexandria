@@ -1114,6 +1114,10 @@ function Library:SetSpoiler(Enabled: boolean)
     if Library.RefreshSpoilerButton then
         Library.RefreshSpoilerButton()
     end
+
+    if Library.HomeTab and Library.HomeTab.NameChip then
+        Library.HomeTab.NameChip.Set(Library.Spoiler)
+    end
 end
 
 function Library:ToggleSpoiler()
@@ -1135,11 +1139,15 @@ function Library:AddAvatarImage(Image: any)
     Cover.Visible = Library.HideAvatar
     Cover.ZIndex = (Image :: any).ZIndex + 1
     Cover.Parent = Image
+    Library:AddToRegistry(Cover, { BackgroundColor3 = "MainColor" })
 
     local ImageCorner = Image:FindFirstChildOfClass("UICorner")
     local CoverCorner = Instance.new("UICorner")
     CoverCorner.CornerRadius = if ImageCorner then ImageCorner.CornerRadius else UDim.new(0, Library.CornerRadius)
     CoverCorner.Parent = Cover
+    if not ImageCorner then
+        table.insert(Library.Corners, CoverCorner)
+    end
 
     local Glyph = Library:CreateIcon(Library:GetIcon("user"), {
         AnchorPoint = Vector2.new(0.5, 0.5),
@@ -1175,6 +1183,10 @@ function Library:SetAvatarHidden(Hidden: boolean?)
             Frame.BackgroundColor3 = GetSchemeValue("MainColor")
             Frame.Visible = Library.HideAvatar
         end
+    end
+
+    if Library.HomeTab and Library.HomeTab.AvatarChip then
+        Library.HomeTab.AvatarChip.Set(Library.HideAvatar)
     end
 end
 
@@ -1626,9 +1638,10 @@ function Library:UpdateSearch(SearchText)
 
     local TabsToSearch = {}
     for _, Tab in Library.Tabs do
-        --// Only searchable tabs: built-ins like the Discord tab carry no groupboxes
+        --// Only searchable tabs: built-ins like Home or Discord carry no groupboxes
         if
             typeof(Tab) == "table"
+            and not Tab.IsHomeTab
             and not Tab.IsCustomTab
             and not Tab.IsDiscordTab
             and typeof(Tab.Groupboxes) == "table"
@@ -1779,17 +1792,29 @@ function Library:SetAdaptiveSize(Enabled: boolean?)
     Library.AdaptiveSize = Enabled == true
 
     --// Follow the screen while it is on: rotating a phone or resizing a window re-fits
-    if Library.AdaptiveSize and not Library.AdaptiveConnection then
-        local Camera = workspace.CurrentCamera
-        if Camera then
-            Library.AdaptiveConnection = Library:GiveSignal(
-                Camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
-                    if Library.AdaptiveSize then
-                        Library:RefreshScale()
-                    end
-                end)
-            )
+    if Library.AdaptiveSize and not Library.AdaptiveCameraConnection then
+        local function BindCamera()
+            if Library.AdaptiveConnection then
+                Library.AdaptiveConnection:Disconnect()
+                Library.AdaptiveConnection = nil
+            end
+
+            local Camera = workspace.CurrentCamera
+            if Camera then
+                Library.AdaptiveConnection = Library:GiveSignal(
+                    Camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+                        if Library.AdaptiveSize then
+                            Library:RefreshScale()
+                        end
+                    end)
+                )
+            end
         end
+
+        BindCamera()
+        Library.AdaptiveCameraConnection = Library:GiveSignal(
+            workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(BindCamera)
+        )
     end
 
     Library:RefreshScale()
@@ -2344,12 +2369,17 @@ do
             if not Corner then
                 Corner = Instance.new("UICorner")
                 Corner.Parent = ParticleLayer
+                table.insert(Library.Corners, Corner)
             end
             Corner.CornerRadius = UDim.new(0, Library.CornerRadius)
         else
             ParticleLayer.Parent = Backdrop
             ParticleLayer.ZIndex = 0
             if Corner then
+                local CornerIndex = table.find(Library.Corners, Corner)
+                if CornerIndex then
+                    table.remove(Library.Corners, CornerIndex)
+                end
                 Corner:Destroy()
             end
         end
@@ -2439,6 +2469,8 @@ do
         return Library.BackgroundDimAmount
     end
 
+    local BackdropTween, ParticleTween
+
     local function Apply()
         local Active = Shown and Library.Weather ~= "None" and #Particles > 0
         local Target = GetBackdropTransparency()
@@ -2455,12 +2487,17 @@ do
             StepConnection = Library:GiveSignal(RunService.RenderStepped:Connect(Step))
         end
 
-        TweenService:Create(Backdrop, Library.WindowAnimationInfo, {
+        StopTween(BackdropTween, true)
+        BackdropTween = TweenService:Create(Backdrop, Library.WindowAnimationInfo, {
             BackgroundTransparency = Target or 1,
-        }):Play()
-        TweenService:Create(ParticleLayer, Library.WindowAnimationInfo, {
+        })
+        BackdropTween:Play()
+
+        StopTween(ParticleTween, true)
+        ParticleTween = TweenService:Create(ParticleLayer, Library.WindowAnimationInfo, {
             GroupTransparency = if Active then 0 else 1,
-        }):Play()
+        })
+        ParticleTween:Play()
 
         if not Active and StepConnection then
             StepConnection:Disconnect()
@@ -2557,7 +2594,7 @@ do
 end
 
 --// Icons \\--
-local CheckIcon, ArrowIcon, ResizeIcon, KeyIcon, PopOutIcon, CloseIcon, SettingsIcon, MinimizeIcon
+local CheckIcon, ArrowIcon, ResizeIcon, PopOutIcon, CloseIcon, SettingsIcon, MinimizeIcon
 function Library:SetIconModule(module: IconModule)
     FetchIcons = true
     Icons = module
@@ -2565,7 +2602,6 @@ function Library:SetIconModule(module: IconModule)
     CheckIcon = Library:GetIcon("check")
     ArrowIcon = Library:GetIcon("chevron-up")
     ResizeIcon = Library:GetIcon("move-diagonal-2")
-    KeyIcon = Library:GetIcon("key")
     PopOutIcon = Library:GetIcon("square-arrow-down-left")
     CloseIcon = Library:GetIcon("x")
     SettingsIcon = Library:GetIcon("settings")
@@ -4298,6 +4334,7 @@ function Library:AddContextMenu(
 
         Size = Size,
         AutoSizeY = List == 1,
+        DefaultClipsDescendants = Menu.ClipsDescendants,
 
         OpenCloseTween = nil,
         Animated = function()
@@ -4379,7 +4416,6 @@ function Library:AddContextMenu(
             end
 
             --// Clipped while it unfurls, so the rows are revealed instead of spilling out
-            local WasClipping = Menu.ClipsDescendants
             Menu.ClipsDescendants = true
 
             Menu.Size = UDim2.new(OpenSize.X.Scale, OpenSize.X.Offset, 0, 0)
@@ -4397,7 +4433,7 @@ function Library:AddContextMenu(
                     StopTween(Table.OpenCloseTween, true)
                     Table.OpenCloseTween = nil
 
-                    Menu.ClipsDescendants = WasClipping
+                    Menu.ClipsDescendants = Table.DefaultClipsDescendants
                     if Table.AutoSizeY then
                         Menu.AutomaticSize = Enum.AutomaticSize.Y
                     end
@@ -4406,6 +4442,7 @@ function Library:AddContextMenu(
 
             Tween:Play()
         else
+            Menu.ClipsDescendants = Table.DefaultClipsDescendants
             Menu.Size = TargetSize
             Menu.Visible = true
         end
@@ -4470,7 +4507,6 @@ function Library:AddContextMenu(
                 Menu.AutomaticSize = Enum.AutomaticSize.None
             end
 
-            local WasClipping = Menu.ClipsDescendants
             Menu.ClipsDescendants = true
 
             local CurrentSize = Menu.Size
@@ -4489,7 +4525,7 @@ function Library:AddContextMenu(
                     Table.OpenCloseTween = nil
 
                     Menu.Visible = false
-                    Menu.ClipsDescendants = WasClipping
+                    Menu.ClipsDescendants = Table.DefaultClipsDescendants
                     if Table.AutoSizeY then
                         Menu.AutomaticSize = Enum.AutomaticSize.Y
                     end
@@ -4498,6 +4534,7 @@ function Library:AddContextMenu(
 
             Tween:Play()
         else
+            Menu.ClipsDescendants = Table.DefaultClipsDescendants
             Menu.Visible = false
         end
     end
@@ -8982,7 +9019,7 @@ do
 
         --// Fired once the track is let go, for work too heavy to do every frame
         function Slider:RunReleased()
-            if Slider.Disabled then
+            if Slider.Disabled or Slider.Destroyed then
                 return
             end
 
@@ -16221,11 +16258,12 @@ function Library:CreateWindow(WindowInfo)
         local TabLabel
         local TabIcon
         local TabStroke
+        local TabBar
         local TabContainer
 
         Icon = Library:GetCustomIcon(Icon)
         do
-            TabButton, TabLabel, TabIcon, TabStroke = CreateTabButton(Name, Icon, Order)
+            TabButton, TabLabel, TabIcon, TabStroke, TabBar = CreateTabButton(Name, Icon, Order)
 
             TabContainer = New("ScrollingFrame", {
                 AutomaticCanvasSize = Enum.AutomaticSize.Y,
@@ -16445,10 +16483,9 @@ function Library:CreateWindow(WindowInfo)
         local ChipRow = New("Frame", {
             AnchorPoint = Vector2.new(0, 1),
             BackgroundTransparency = 1,
-            LayoutOrder = 3,
-            Position = UDim2.fromScale(0, 1),
-            Size = UDim2.new(1, 0, 0, 26),
-            Parent = ProfileText,
+            Position = UDim2.new(0, 16, 1, -14),
+            Size = UDim2.new(1, -180, 0, 26),
+            Parent = Profile,
         })
         New("UIListLayout", {
             FillDirection = Enum.FillDirection.Horizontal,
@@ -16509,10 +16546,24 @@ function Library:CreateWindow(WindowInfo)
             })
 
             local State = Active == true
+            local function SetRegistryKey(Object, Property, Key)
+                if Object and Library.Registry[Object] then
+                    Library.Registry[Object][Property] = Key
+                end
+            end
             local function Paint()
                 local Accent = Library.Scheme.AccentColor
+                local BgKey = if State then "DarkAccentColor" else "BackgroundColor"
+                local StrokeKey = if State then "AccentColor" else "OutlineColor"
+                local TextKey = if State then "AccentColor" else "MutedFontColor"
+
+                SetRegistryKey(Button, "BackgroundColor3", BgKey)
+                SetRegistryKey(Stroke, "Color", StrokeKey)
+                SetRegistryKey(ChipLabel, "TextColor3", TextKey)
+                SetRegistryKey(ChipIcon, "ImageColor3", TextKey)
+
                 TweenService:Create(Button, Library.TweenInfo, {
-                    BackgroundColor3 = if State then Library:GetDarkerColor(Accent) else Library.Scheme.BackgroundColor,
+                    BackgroundColor3 = if State then GetSchemeValue("DarkAccentColor") else Library.Scheme.BackgroundColor,
                 }):Play()
                 TweenService:Create(Stroke, Library.TweenInfo, {
                     Color = if State then Accent else Library.Scheme.OutlineColor,
@@ -16699,22 +16750,26 @@ function Library:CreateWindow(WindowInfo)
 
         --// The unit sits right after the number, so it follows the number's width
         local function PlaceUnit(Graph, Text: string)
+            if Graph.LastText == Text then
+                return
+            end
+            Graph.LastText = Text
             Graph.Value.Text = Text
-            local Width = TextService:GetTextSize(Text, 20, Enum.Font.GothamBold, Vector2.new(1000, 100)).X
+            local Width = Library:GetTextBounds(Text, Library.Scheme.FontBold, 20)
             Graph.Unit.Position = UDim2.fromOffset(math.ceil(Width) + 5, 22)
         end
 
         local function PushSample(Graph, Value: number, Ceiling: number)
-            table.insert(Graph.History, Value)
-            if #Graph.History > BarCount then
-                table.remove(Graph.History, 1)
-            end
-
-            --// The first reading lands while the UI is still being built, so it is drawn
-            --// but kept out of the min/avg/max
+            --// The first reading lands while the UI is still being built, so skip it
+            --// completely rather than polluting min/avg/max or the bar history
             if Graph.Warmup then
                 Graph.Warmup = false
                 return
+            end
+
+            table.insert(Graph.History, Value)
+            if #Graph.History > BarCount then
+                table.remove(Graph.History, 1)
             end
 
             Graph.Min = math.min(Graph.Min, Value)
@@ -16981,11 +17036,13 @@ function Library:CreateWindow(WindowInfo)
         end
 
         --// The public server list is an executor http call; without one, only rejoin works
-        local function FetchServers(): { any }?
+        local function FetchServers(SortOrder: string?): { any }?
             local Request = (syn and syn.request) or (http and http.request) or http_request or request
+            local Order = if SortOrder == "Desc" then "Desc" else "Asc"
             local Url = string.format(
-                "https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100",
-                game.PlaceId
+                "https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=%s&limit=100",
+                game.PlaceId,
+                Order
             )
 
             local Body
@@ -17017,16 +17074,25 @@ function Library:CreateWindow(WindowInfo)
             return Decoded.data
         end
 
-        local function JoinServer(Pick: (({ any }) -> any))
+        local Joining = false
+
+        local function JoinServer(SortOrder: string, Pick: (({ any }) -> any))
+            if Joining then
+                return
+            end
+            Joining = true
+
             task.spawn(function()
-                local Servers = FetchServers()
+                local Servers = FetchServers(SortOrder)
                 if not Servers then
+                    Joining = false
                     Notify("Server list", "This executor can't read the server list.")
                     return
                 end
 
                 local Choice = Pick(Servers)
                 if not Choice then
+                    Joining = false
                     Notify("Server list", "No other server to join right now.")
                     return
                 end
@@ -17036,7 +17102,12 @@ function Library:CreateWindow(WindowInfo)
                 end)
 
                 if not Ok then
+                    Joining = false
                     Notify("Teleport failed", tostring(Error))
+                else
+                    task.delay(3, function()
+                        Joining = false
+                    end)
                 end
             end)
         end
@@ -17052,7 +17123,7 @@ function Library:CreateWindow(WindowInfo)
         end)
 
         Action("Hop", "shuffle", 1, function()
-            JoinServer(function(Servers)
+            JoinServer("Desc", function(Servers)
                 local Candidates = {}
                 for _, Server in Servers do
                     if Server.id ~= game.JobId and (Server.playing or 0) < (Server.maxPlayers or 0) then
@@ -17065,7 +17136,7 @@ function Library:CreateWindow(WindowInfo)
         end)
 
         Action("Lowest", "users", 2, function()
-            JoinServer(function(Servers)
+            JoinServer("Asc", function(Servers)
                 local Best, BestCount = nil, math.huge
                 for _, Server in Servers do
                     local Playing = Server.playing or 0
@@ -17301,6 +17372,10 @@ function Library:CreateWindow(WindowInfo)
         end
 
         local function StartLive()
+            if Tab.Destroyed or Library.Unloaded or not Library.Toggled then
+                return
+            end
+
             if not StepConnection then
                 StepConnection = RunService.RenderStepped:Connect(function(DeltaTime: number)
                     FrameTime += (DeltaTime - FrameTime) * 0.1
@@ -17310,7 +17385,7 @@ function Library:CreateWindow(WindowInfo)
 
             if not SampleThread then
                 SampleThread = task.spawn(function()
-                    while Library.ActiveTab == Tab and not Tab.Destroyed do
+                    while Library.ActiveTab == Tab and Library.Toggled and not Tab.Destroyed and not Library.Unloaded do
                         PushSample(FpsGraph, math.clamp(1 / math.max(FrameTime, 1e-4), 0, 999), 60)
 
                         local Ping = ReadPing()
@@ -17335,6 +17410,19 @@ function Library:CreateWindow(WindowInfo)
             if StepConnection then
                 StepConnection:Disconnect()
                 StepConnection = nil
+            end
+
+            if SampleThread then
+                pcall(task.cancel, SampleThread)
+                SampleThread = nil
+            end
+        end
+
+        function Tab:RefreshLive()
+            if Library.ActiveTab == Tab and Library.Toggled and not Tab.Destroyed and not Library.Unloaded then
+                StartLive()
+            else
+                StopLive()
             end
         end
 
@@ -17395,6 +17483,46 @@ function Library:CreateWindow(WindowInfo)
             end
         end
 
+        local SelectionTweens = {}
+
+        function Tab:SetSelected(Selected: boolean)
+            Tab.Selected = Selected == true
+
+            for Index, Tween in SelectionTweens do
+                StopTween(Tween, true)
+                SelectionTweens[Index] = nil
+            end
+
+            local Info = Library.TabSelectTweenInfo or Library.TweenInfo
+            local function Tween(Object, Properties)
+                if not Object then
+                    return
+                end
+
+                local NewTween = TweenService:Create(Object, Info, Properties)
+                table.insert(SelectionTweens, NewTween)
+                NewTween:Play()
+            end
+
+            local Side = TabBar and WindowInfo.TabLayout == "Side"
+            local Pill = Selected and not Side
+
+            Tween(TabButton, { BackgroundTransparency = Pill and 0 or 1 })
+            Tween(TabStroke, { Transparency = Pill and 0 or 1 })
+
+            if TabBar then
+                Tween(TabBar, {
+                    BackgroundTransparency = Selected and 0 or 1,
+                    Size = UDim2.fromOffset(3, Selected and 18 or 0),
+                })
+            end
+
+            Tween(TabLabel, { TextTransparency = Selected and 0 or 0.5 })
+            if TabIcon then
+                Tween(TabIcon, { ImageTransparency = Selected and 0 or 0.5 })
+            end
+        end
+
         function Tab:Show()
             if Library.ActiveTab == Tab then
                 return
@@ -17404,40 +17532,17 @@ function Library:CreateWindow(WindowInfo)
                 Library.ActiveTab:Hide()
             end
 
-            TweenService:Create(TabButton, Library.TweenInfo, {
-                BackgroundTransparency = 0,
-            }):Play()
-            TweenService:Create(TabStroke, Library.TweenInfo, {
-                Transparency = 0,
-            }):Play()
-            TweenService:Create(TabLabel, Library.TweenInfo, {
-                TextTransparency = 0,
-            }):Play()
-            if TabIcon then
-                TweenIcon(TabIcon, { ImageTransparency = 0 })
-            end
-
+            Tab:SetSelected(true)
             Library:PlayTabAnimation(Tab, true)
             Window:ShowTabInfo(Name, Description)
 
             Library.ActiveTab = Tab
+            SyncSubTabStrips()
             StartLive()
         end
 
         function Tab:Hide()
-            TweenService:Create(TabButton, Library.TweenInfo, {
-                BackgroundTransparency = 1,
-            }):Play()
-            TweenService:Create(TabStroke, Library.TweenInfo, {
-                Transparency = 1,
-            }):Play()
-            TweenService:Create(TabLabel, Library.TweenInfo, {
-                TextTransparency = 0.5,
-            }):Play()
-            if TabIcon then
-                TweenIcon(TabIcon, { ImageTransparency = 0.5 })
-            end
-
+            Tab:SetSelected(false)
             Library:PlayTabAnimation(Tab, false)
             Window:HideTabInfo()
 
@@ -19442,7 +19547,10 @@ function Library:CreateWindow(WindowInfo)
         end
 
         --// Only runs while the island is up
+        local StatElapsed = 0
+
         local function StartStats()
+            StatElapsed = 0
             StatFront.Text = CurrentStatText()
             StatFront.Position = UDim2.fromScale(0, 0.5)
             StatBack.Text = ""
@@ -19451,8 +19559,10 @@ function Library:CreateWindow(WindowInfo)
                 StatConnection = RunService.RenderStepped:Connect(function(DeltaTime: number)
                     --// Smoothed so the number does not jitter every frame
                     FrameTime += (DeltaTime - FrameTime) * 0.1
+                    StatElapsed += DeltaTime
 
-                    if not Hovering then
+                    if not Hovering and StatElapsed >= 0.25 then
+                        StatElapsed = 0
                         StatFront.Text = CurrentStatText()
                     end
                 end)
@@ -19460,9 +19570,9 @@ function Library:CreateWindow(WindowInfo)
 
             if not RotateThread then
                 RotateThread = task.spawn(function()
-                    while Minimized do
+                    while Minimized and not Library.Unloaded do
                         task.wait(3)
-                        if not Minimized then
+                        if not Minimized or Library.Unloaded then
                             break
                         end
 
@@ -19479,10 +19589,17 @@ function Library:CreateWindow(WindowInfo)
                 StatConnection:Disconnect()
                 StatConnection = nil
             end
+
+            if RotateThread then
+                pcall(task.cancel, RotateThread)
+                RotateThread = nil
+            end
         end
 
+        Library:OnUnload(StopStats)
+
         local function TargetSize()
-            local TitleWidth = TextService:GetTextSize(IslandTitle.Text, 15, Enum.Font.GothamBold, Vector2.new(1000, 100)).X
+            local TitleWidth = Library:GetTextBounds(IslandTitle.Text, Library.Scheme.FontBold, 15)
             --// name + gap + dot + gap + stat, inside the pill's own padding
             local Width = math.clamp(TitleWidth + 23 + StatWidth + 40, 170, 360)
             if Hovering then
@@ -19573,6 +19690,11 @@ function Library:CreateWindow(WindowInfo)
                 Hovering = false
                 HideIsland()
             end
+
+            if Window.Home and Window.Home.RefreshLive then
+                Window.Home:RefreshLive()
+            end
+
             return Result
         end
 
@@ -19696,6 +19818,14 @@ function Library:CreateWindow(WindowInfo)
 
             --// The links default to whatever the Discord tab is already pointed at
             Info.Invite = Info.Invite or DiscordConfig.Invite
+            if not Info.Website and typeof(DiscordConfig.Links) == "table" then
+                for _, Link in DiscordConfig.Links do
+                    if typeof(Link) == "table" and Link.Url then
+                        Info.Website = Link.Url
+                        break
+                    end
+                end
+            end
             Info.Enabled = nil
 
             Window.Home = Window:AddHomeTab(Info)
@@ -20480,13 +20610,16 @@ function Library:Unload()
     end
 
     --// Destroy elements
-    for Index = #Library.Tabs, 1, -1 do
-        local Tab = table.remove(Library.Tabs, Index)
+    for Key, Tab in Library.Tabs do
+        Library.Tabs[Key] = nil
 
         if Tab and Tab.Destroy then
             Library:SafeCallback(Tab.Destroy, Tab)
         end
     end
+    Library.ActiveTab = nil
+    Library.PreviousTab = nil
+    Library.HomeTab = nil
 
     for Index = #Tooltips, 1, -1 do
         local Tooltip = table.remove(Tooltips, Index)

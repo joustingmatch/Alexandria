@@ -1340,7 +1340,53 @@ export type WindowAnimations = {
     KeyPicker: boolean?,
 }
 
+export type HomeTabInfo = {
+    Enabled: boolean?,
+    Name: string?,
+    Icon: string?,
+    Description: string?,
+    Tooltip: string?,
+    Order: number?,
+    Key: string?,
+    AutoShow: boolean?,
+    Invite: string?,
+    CommunityName: string?,
+    Website: string?,
+    WebsiteName: string?,
+}
+
+export type HomeTab = {
+    Name: string,
+    Description: string?,
+    IsHomeTab: true,
+    Key: string,
+    Selected: boolean?,
+    Tooltip: string?,
+    TooltipTable: Tooltip?,
+    Destroyed: boolean,
+    Window: Window,
+    Button: TextButton,
+    Container: ScrollingFrame,
+    NameChip: { Button: TextButton, Set: (Value: boolean) -> () },
+    AvatarChip: { Button: TextButton, Set: (Value: boolean) -> () },
+
+    SetSelected: (self: HomeTab, Selected: boolean) -> (),
+    RefreshLive: (self: HomeTab) -> (),
+    RefreshSides: (self: HomeTab) -> (),
+    Resize: (self: HomeTab) -> (),
+    UpdateCorners: (self: HomeTab) -> (),
+    Hover: (self: HomeTab, Hovering: boolean) -> (),
+    Show: (self: HomeTab) -> (),
+    Hide: (self: HomeTab) -> (),
+    SetVisible: (self: HomeTab, Visible: boolean) -> (),
+    SetOrder: (self: HomeTab, Order: number) -> (),
+    SetTooltip: (self: HomeTab, Text: string?) -> (),
+    Destroy: (self: HomeTab) -> (),
+}
+
 export type WindowInfo = {
+    --// The built-in Home tab: false removes it, a table overrides defaults
+    Home: (false | HomeTabInfo)?,
     --// The built-in Discord tab: false removes it, a string sets the invite,
     --// a table overrides any of the Library.Discord defaults
     Discord: (false | string | DiscordTabInfo)?,
@@ -1405,6 +1451,8 @@ export type Window = {
     AlwaysOnTop: boolean,
     Snapping: boolean?,
     MainFrame: Frame?,
+    --// The built-in Home tab, unless it was turned off
+    Home: HomeTab?,
     --// The built-in Discord tab, unless it was turned off
     Discord: DiscordTab?,
 
@@ -1428,6 +1476,8 @@ export type Window = {
         Description: string?,
         Order: number?
     ) -> Tab,
+    AddHomeTab: ((self: Window, Info: HomeTabInfo?) -> HomeTab)
+        & ((self: Window, Name: string) -> HomeTab),
     AddDiscordTab: ((self: Window, Info: DiscordTabInfo) -> DiscordTab)
         & ((self: Window, Name: string, Invite: string?) -> DiscordTab),
     AddCustomTab: (
@@ -1489,11 +1539,12 @@ export type Library = {
     Searching: boolean,
     GlobalSearch: boolean,
     LastSearchTab: Tab?,
-    ActiveTab: (Tab | CustomTab)?,
-    PreviousTab: (Tab | CustomTab)?,
+    ActiveTab: (Tab | HomeTab | CustomTab)?,
+    PreviousTab: (Tab | HomeTab | CustomTab)?,
+    HomeTab: HomeTab?,
     ActiveLoading: Loading?,
     ActiveDialog: Dialog?,
-    Tabs: { [string]: Tab | CustomTab },
+    Tabs: { [string]: Tab | HomeTab | CustomTab },
     TabButtons: { [number]: any },
     DependencyBoxes: { [number]: DependencyBox | DependencyGroupbox },
     KeybindFrame: Frame?,
@@ -1507,6 +1558,7 @@ export type Library = {
     SpecificCorners: { [number]: UICorner },
     ToggleKeybind: Enum.KeyCode,
     TweenInfo: TweenInfo,
+    TabSelectTweenInfo: TweenInfo,
     NotifyTweenInfo: TweenInfo,
     TabTransitionInfo: TweenInfo,
     TabSwipeOffset: number,
@@ -1597,6 +1649,15 @@ export type Library = {
     BackgroundDim: boolean,
     BackgroundDimAmount: number,
     SetBackgroundDim: (self: Library, Enabled: boolean?, Amount: number?) -> (),
+
+    --// Privacy & Session
+    HideAvatar: boolean,
+    AvatarImages: { [Instance]: Frame },
+    AddAvatarImage: (self: Library, Image: any) -> any,
+    SetAvatarHidden: (self: Library, Hidden: boolean?) -> (),
+    ToggleAvatarHidden: (self: Library) -> (),
+    LoadedAt: number,
+    ExecCount: number,
     GetBetterColor: (self: Library, Color: Color3, Add: number) -> Color3,
     GetLighterColor: (self: Library, Color: Color3) -> Color3,
     GetDarkerColor: (self: Library, Color: Color3) -> Color3,

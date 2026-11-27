@@ -368,7 +368,7 @@ function SaveManager:IgnoreThemeSettings()
         "SurfaceColor", "HoverColor", "InlineColor", "DarkAccentColor", "ToggleOffColor", "MutedFontColor",
         "ThemeManager_ThemeList", "ThemeManager_CustomThemeList", "ThemeManager_CustomThemeName", "ThemeManager_ThemeJSON",
         "ThemeManager_Weather", "ThemeManager_WeatherMode", "ThemeManager_UIScale", "ThemeManager_AdaptiveSize",
-        "ThemeManager_BackgroundDim", "ThemeManager_DimAmount"
+        "ThemeManager_BackgroundDim", "ThemeManager_DimAmount", "ShowToggleButton", "ToggleButtonMode"
     })
 end
 

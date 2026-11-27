@@ -366,7 +366,7 @@ function ThemeManager:SaveCustomTheme(ThemeName: string): any
         return false, "Invalid theme name provided"
     end
 
-    if string.lower(ThemeName) == "default" then
+    if string.lower(ThemeName) == "default" or string.lower(ThemeName) == "interface" then
         return false, "Invalid theme name provided"
     end
 
@@ -1017,6 +1017,7 @@ function ThemeManager:CreateThemeManager(Themesbox: any, Interfacebox: any?)
         local Enabled = Library.Toggles.ShowToggleButton and Library.Toggles.ShowToggleButton.Value
         local Mode = Library.Options.ToggleButtonMode and Library.Options.ToggleButtonMode.Value or "For Mobile & Mac Only"
         Library:SetToggleButtonVisible(Enabled == true and (Mode == "Both Mobile & PC" or Library.IsMobile or IsMac))
+        SaveInterface()
     end
 
     Interface:AddCheckbox("ShowToggleButton", {
@@ -1090,13 +1091,23 @@ function ThemeManager:CreateThemeManager(Themesbox: any, Interfacebox: any?)
         end,
     })
 
-    --// The adaptive factor changes on its own when the screen does
-    local Camera = workspace.CurrentCamera
-    if Camera then
-        Library:GiveSignal(Camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
-            task.defer(RefreshScaleLabel)
-        end))
+    --// The adaptive factor changes on its own when the screen does (re-bind if camera swaps)
+    local ViewportConnection
+    local function BindCameraViewport()
+        if ViewportConnection then
+            ViewportConnection:Disconnect()
+            ViewportConnection = nil
+        end
+
+        local Camera = workspace.CurrentCamera
+        if Camera then
+            ViewportConnection = Library:GiveSignal(Camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+                task.defer(RefreshScaleLabel)
+            end))
+        end
     end
+    BindCameraViewport()
+    Library:GiveSignal(workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(BindCameraViewport))
 
     Interface:AddDivider()
 
@@ -1144,7 +1155,7 @@ function ThemeManager:CreateThemeManager(Themesbox: any, Interfacebox: any?)
         Tooltip = "Dims the screen behind the window while it is open.",
         Default = true,
         Callback = function(Value)
-            Library:SetBackgroundDim(Value, DimSlider and DimSlider.Value / 100 or nil)
+            Library:SetBackgroundDim(Value, if DimSlider then 1 - DimSlider.Value / 100 else nil)
             SaveInterface()
         end,
     })
@@ -1162,6 +1173,11 @@ function ThemeManager:CreateThemeManager(Themesbox: any, Interfacebox: any?)
                 Library.Toggles.ThemeManager_BackgroundDim and Library.Toggles.ThemeManager_BackgroundDim.Value,
                 1 - Value / 100
             )
+            if not (DimSlider and DimSlider.Dragging) then
+                SaveInterface()
+            end
+        end,
+        Released = function()
             SaveInterface()
         end,
     })
