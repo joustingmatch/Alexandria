@@ -2664,7 +2664,7 @@ function Library:GetTextBounds(Text: string, Font: Font, Size: number, Width: nu
     local Params = Instance.new("GetTextBoundsParams")
     Params.Text = Text
     Params.RichText = true
-    Params.Font = Font
+    Params.Font = Font or Library.Scheme.Font
     Params.Size = Size * Scale
     if Width then
         Params.Width = Width * Scale
@@ -16755,7 +16755,7 @@ function Library:CreateWindow(WindowInfo)
             end
             Graph.LastText = Text
             Graph.Value.Text = Text
-            local Width = Library:GetTextBounds(Text, Library.Scheme.FontBold, 20)
+            local Width = Library:GetTextBounds(Text, Graph.Value.FontFace, 20)
             Graph.Unit.Position = UDim2.fromOffset(math.ceil(Width) + 5, 22)
         end
 
@@ -19599,7 +19599,7 @@ function Library:CreateWindow(WindowInfo)
         Library:OnUnload(StopStats)
 
         local function TargetSize()
-            local TitleWidth = Library:GetTextBounds(IslandTitle.Text, Library.Scheme.FontBold, 15)
+            local TitleWidth = Library:GetTextBounds(IslandTitle.Text, IslandTitle.FontFace, 15)
             --// name + gap + dot + gap + stat, inside the pill's own padding
             local Width = math.clamp(TitleWidth + 23 + StatWidth + 40, 170, 360)
             if Hovering then
